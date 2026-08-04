@@ -87,6 +87,8 @@ def as_ipv4(host: str) -> str | None:
     for part in parts:
         if not part:
             return None
+        if part[0] in "+-":
+            return None  # WHATWG parser only accepts digits (plus 0x/0 prefixes)
         try:
             if part.lower().startswith("0x"):
                 if len(part) == 2:
@@ -150,6 +152,8 @@ def is_private_ip(address: str) -> bool:
 
 def _is_private_host(hostname: str) -> bool:
     host = hostname.lower()
+    if host.endswith("."):
+        host = host[:-1]
     if host == "localhost" or host.endswith(".localhost"):
         return True
     # urlsplit already stripped the brackets from an IPv6 literal.

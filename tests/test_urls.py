@@ -60,10 +60,21 @@ def test_as_ipv4_returns_none_for_non_addresses(host):
     assert as_ipv4(host) is None
 
 
+@pytest.mark.parametrize("host", ["-1", "-2164260863", "+1", "+2130706433", "1.2.3.-4"])
+def test_as_ipv4_rejects_signed_parts(host):
+    """int(part, base) accepts a leading +/-, but the WHATWG parser only
+    accepts ASCII digits (plus the 0x/0 radix prefixes) — a signed part must
+    fall through to "this is a domain, not an address", same as letters do."""
+    assert as_ipv4(host) is None
+
+
 PRIVATE = [
     "localhost",
+    "localhost.",
     "foo.localhost",
+    "foo.localhost.",
     "127.0.0.1",
+    "127.0.0.1.",
     "127.53.1.9",
     "0.0.0.0",
     "10.1.2.3",
@@ -115,6 +126,12 @@ def test_private_hosts_pass_when_not_asked(host):
 @pytest.mark.parametrize("host", PUBLIC)
 def test_public_hosts_pass(host):
     assert check_url(f"https://{host}/", block_private=True).valid, host
+
+
+def test_trailing_dot_on_public_host_is_not_over_blocked():
+    """The localhost-guard fix strips a trailing FQDN dot before comparing —
+    make sure that normalization doesn't start blocking public hosts too."""
+    assert check_url("https://example.com./", block_private=True).valid
 
 
 @pytest.mark.parametrize(
