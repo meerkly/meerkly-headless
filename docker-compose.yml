@@ -1,0 +1,45 @@
+services:
+  worker:
+    build: .
+    # Without this, compose tries Docker Hub first and every `up` starts with
+    # a failed pull.
+    pull_policy: build
+    restart: unless-stopped
+    environment:
+      # Empty default (not :?) so `down`, `logs`, and `ps` work without a key.
+      MEERKLY_API_KEY: ${MEERKLY_API_KEY:-}
+      MEERKLY_WORKER_ID: ${MEERKLY_WORKER_ID:-worker-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      APP_ENV: ${APP_ENV:-}
+      GATEWAY_URL: ${GATEWAY_URL:-}
+      ACCOUNT_BASE_URL: ${ACCOUNT_BASE_URL:-}
+      ALLOW_INSECURE_GATEWAY: ${ALLOW_INSECURE_GATEWAY:-}
+    volumes:
+      - worker-data:/data
+    # Needed on Linux so the container can reach a gateway on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    shm_size: 2gb
+    # An in-flight crawl has a 30s budget; Docker's default 10s SIGKILL would
+    # cut it off mid-job.
+    stop_grace_period: 45s
+    healthcheck:
+      # /readyz here (is it actually serving?) vs /healthz in the image (is it
+      # alive?).
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9090/readyz', timeout=4).status==200 else 1)
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  worker-data:
