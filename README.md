@@ -86,17 +86,22 @@ unset.
 | `ACCOUNT_BASE_URL` | `https://account.meerkly.com` | |
 | `APP_ENV` | `production` | `development` points both URLs at localhost. |
 | `HEALTH_PORT` | `9090` | `0` disables the health server. |
-| `HEADLESS` | `true` | Any value but the literal `false` means true. The image sets `false`. |
+| `HEADLESS` | `true` | Any value but the literal `false` means true. See the note below — this is not a headless browser. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `MEERKLY_LOCALE` / `MEERKLY_TIMEZONE` | auto | Pin them instead of deriving from the egress IP. |
 | `ALLOW_INSECURE_GATEWAY` | `false` | Permits plaintext to a remote host. Exactly `true` to enable. |
 
 Two image settings are deliberate and should not be "simplified":
 
-- **`HEADLESS=false`.** A truly headless browser is detectable in ways no flag
-  fixes, so the container starts its own Xvfb and runs headful against it. The
-  entrypoint uses `-nolisten tcp`; the library's own headless mode would start
-  an X server with `-ac -listen tcp` instead.
+- **`HEADLESS=true` does not mean a headless browser.** `invisible_playwright`
+  runs Firefox headed-and-hidden: on Linux it starts its own Xvfb and points the
+  browser at it, because a truly headless browser is detectable in ways no flag
+  fixes. This is why the image installs the `xvfb` package even though nothing
+  in it starts an X server directly. Worth knowing: the library's Xvfb is
+  started with `-ac -listen tcp`, so the display accepts unauthenticated TCP
+  connections from inside the container's network namespace. Nothing publishes
+  that port, so it is not reachable from outside — but don't put this container
+  on a shared network namespace with anything untrusted.
 - **`INVISIBLE_CORE_AUTOFIX=off`.** Otherwise importing the engine can shell out
   to `pip install --force-reinstall` with a five-minute timeout — in an
   immutable image that means either a mutated `site-packages` or a long stall.
