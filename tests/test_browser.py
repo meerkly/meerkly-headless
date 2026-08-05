@@ -151,9 +151,10 @@ def _config(tmp_path):
 
 
 class _FakePage:
-    def __init__(self):
+    def __init__(self, url="about:blank"):
         self.closed = False
         self.handlers = {}
+        self.url = url
 
     def on(self, event, handler):
         self.handlers[event] = handler
@@ -169,10 +170,14 @@ class _FakePage:
 
 
 class _FakeContext:
-    """Fires the 'page' event from new_page(), the way Playwright really does."""
+    """Fires the 'page' event from new_page(), the way Playwright really does.
 
-    def __init__(self):
-        self.pages = []
+    `initial` models the persistent context's about:home page, which the real
+    engine hands back already broken.
+    """
+
+    def __init__(self, initial=()):
+        self.pages = [_FakePage(url) for url in initial]
         self._handlers = {}
         self.browser = None
 
@@ -189,11 +194,14 @@ class _FakeContext:
 
 
 class _FakeInvisiblePlaywright:
-    """Stands in for the engine so _launch itself can be exercised."""
+    """Stands in for the engine so _launch itself can be exercised.
+
+    Like the real persistent context, it comes up with an about:home page.
+    """
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.context = _FakeContext()
+        self.context = _FakeContext(initial=["about:home"])
 
     async def __aenter__(self):
         return self.context
@@ -223,6 +231,29 @@ async def test_launch_does_not_close_the_page_it_just_created(tmp_path, log, mon
 
     assert manager._page is not None, "no page was adopted"
     assert not manager._page.is_closed(), "the primary page was closed at launch"
+    assert manager.is_ready()
+
+
+async def test_launch_never_adopts_the_contexts_initial_page(tmp_path, log, monkeypatch):
+    """Regression: the persistent context starts on about:home, whose browsing
+    context is unusable -- goto against it fails with 'browsingContext is
+    undefined'. We must open our own page and discard that one."""
+    import invisible_playwright.async_api as engine
+
+    from meerkly_worker.browser import BrowserManager
+
+    monkeypatch.setattr(engine, "InvisiblePlaywright", _FakeInvisiblePlaywright)
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    await manager._launch()
+    await asyncio.sleep(0.01)
+
+    assert manager._page.url != "about:home", "adopted the context's broken initial page"
+    assert manager._page.url == "about:blank", "should be a page we opened ourselves"
+
+    initial = [p for p in manager._context.pages if p.url == "about:home"]
+    assert initial and initial[0].is_closed(), "the stale about:home page was left open"
+    assert not manager._page.is_closed()
     assert manager.is_ready()
 
 

@@ -165,16 +165,25 @@ class BrowserManager:
 
         context.on("close", self._on_context_closed)
 
-        pages = context.pages
-        self._page = pages[0] if pages else await context.new_page()
+        # ALWAYS open our own page; never adopt the one the persistent context
+        # starts with. That initial page is about:home and its browsing context
+        # is not usable -- goto on it fails with
+        #   Protocol error (Page.navigate): can't access property "loadURI",
+        #   browsingContext is undefined
+        # The library's new_page() carries a settle for exactly this race.
+        # Open first, then discard the stale page, so the context is never
+        # momentarily empty (which would close it).
+        stale = list(context.pages)
+        self._page = await context.new_page()
+        for page in stale:
+            await self._close_quietly(page)
+
         self._page.on("crash", self._on_crash)
         self._page.set_default_timeout(NAVIGATION_TIMEOUT_MS)
 
         # Registered only AFTER the primary page exists. new_page() fires this
         # event, so subscribing earlier means the handler runs while _page is
-        # still None, decides the page it just saw is a stray popup, and closes
-        # the one page we need -- leaving goto to fail with "browsingContext is
-        # undefined".
+        # still None and closes the page we just opened.
         context.on("page", self._on_extra_page)
 
         self._logger.info("Browser ready", headless=self._cfg.headless)
