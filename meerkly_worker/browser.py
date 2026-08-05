@@ -28,14 +28,14 @@ from pathlib import Path
 
 from . import snippets
 from .config import Config
-from .fetch_spec import STABLE_QUIET_MS, effective_detect_probe, effective_settle_cap
+from .fetch_spec import effective_detect_probe, effective_settle_cap
 from .identity import set_browser_version
 
 NAVIGATION_TIMEOUT_MS = 30000
 MAX_HTML_CHARS = 20_000_000
 CRASH_RELAUNCH_DELAY_SEC = 1.0
-# How often the CSP fallback re-serializes the DOM to look for changes.
-STABLE_POLL_MS = 250
+# Pause used in place of the stable settle when a page's CSP forbids eval.
+STABLE_CSP_FALLBACK_MS = 1000
 
 # Firefox's profile lock files (Chromium's are SingletonLock/Socket/Cookie).
 PROFILE_LOCKS = ("lock", ".parentlock", "parent.lock")
@@ -476,43 +476,16 @@ class BrowserManager:
         await self.exec_js(page, snippets.SETTLE_STABLE, cap, cap, None)
 
         if _is_csp_blocked(self._last_exec_error):
-            self._logger.debug(
-                "Page CSP blocks eval; settling by polling the DOM instead", capMs=cap
+            # The stable settle is the one wait that genuinely needs an in-page
+            # MutationObserver -- there is no protocol-level equivalent, unlike
+            # the selector wait and rule probe. Under a CSP that forbids eval we
+            # cannot observe quiet at all, so pause briefly rather than capture
+            # instantly and silently pretend the page had settled.
+            self._logger.warn(
+                "Page CSP blocks eval, so the stable settle degraded to a fixed pause",
+                pauseMs=min(cap, STABLE_CSP_FALLBACK_MS),
             )
-            await self._settle_by_polling(page, cap)
-
-    async def _settle_by_polling(self, page, cap_ms: int) -> None:
-        """DOM-quiet detection without eval, for pages whose CSP forbids it.
-
-        The MutationObserver snippet is the primary path and stays: it is
-        cheap and precise. But when a page's CSP blocks eval it cannot run at
-        all, and a fixed pause is far too weak -- content that arrives by XHR a
-        few seconds after load (a search page's generated summary, say) gets
-        captured before it lands, which reads as "the wait returned too early".
-
-        So re-serialize the document over the protocol and treat it as settled
-        once the content stops changing for the same STABLE_QUIET_MS window the
-        snippet uses. Coarser and more expensive than observing mutations, but
-        it actually waits for the page.
-        """
-        deadline = time.monotonic() + cap_ms / 1000
-        previous = None
-        last_change = time.monotonic()
-
-        while time.monotonic() < deadline:
-            html = await self._page_content(page, 5000)
-            if not isinstance(html, str):
-                return  # page went away; nothing to settle for
-
-            digest = hashlib.sha256(html.encode("utf-8", "ignore")).digest()
-            now = time.monotonic()
-            if digest != previous:
-                previous = digest
-                last_change = now
-            elif (now - last_change) * 1000 >= STABLE_QUIET_MS:
-                return
-
-            await asyncio.sleep(STABLE_POLL_MS / 1000)
+            await asyncio.sleep(min(cap, STABLE_CSP_FALLBACK_MS) / 1000)
 
     async def _network_idle(self, page, budget_ms: int) -> bool:
         try:

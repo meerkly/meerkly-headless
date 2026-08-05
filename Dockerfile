@@ -58,12 +58,9 @@ COPY --from=build /install /usr/local
 # cannot resolve the session locale and silently falls back to en-US while
 # still taking the timezone from the egress IP, producing exactly the
 # language/timezone mismatch a fingerprinter looks for.
-COPY docker/warmup.py /tmp/warmup.py
 RUN python -m invisible_playwright fetch \
-    && mkdir -p /opt/engine/geoip \
-    && python /tmp/warmup.py \
-    && rm -f /tmp/warmup.py \
-    && chmod -R a+rX /opt/engine
+    && chmod -R a+rX /opt/engine \
+    && mkdir -p /opt/engine/geoip
 
 # Crawled pages are untrusted -- never run the browser as root.
 RUN useradd --create-home --uid 10001 worker \
