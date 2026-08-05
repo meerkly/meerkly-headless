@@ -717,3 +717,38 @@ async def test_refetch_is_not_used_when_the_viewer_dom_still_has_it(tmp_path, lo
 
     assert await manager._raw_body_if_json(page, response) == '{"from":"dom"}'
     assert page.context.calls == 0, "must not re-fetch when the DOM still had it"
+
+
+# --- title fallback ---------------------------------------------------------
+
+
+def test_json_without_a_title_falls_back_to_the_hostname():
+    """An API endpoint has no <title>, so a JSON crawl would report "".
+    Desktop's Chromium path already shows the host; this keeps them agreeing."""
+    from meerkly_worker.browser import title_for
+
+    assert title_for("", "https://ipwho.is/", True) == "ipwho.is"
+    assert title_for(None, "https://api.example.com/v1/ip?x=1", True) == "api.example.com"
+
+
+def test_a_real_title_is_never_overwritten():
+    from meerkly_worker.browser import title_for
+
+    assert title_for("ipwho.is API", "https://ipwho.is/", True) == "ipwho.is API"
+    assert title_for("Example Domain", "https://example.com/", False) == "Example Domain"
+
+
+def test_untitled_html_stays_untitled():
+    """A genuinely untitled page should read as untitled rather than be given a
+    title that was never in the document."""
+    from meerkly_worker.browser import title_for
+
+    assert title_for("", "https://example.com/", False) == ""
+    assert title_for(None, "https://example.com/", False) is None
+
+
+def test_title_fallback_survives_a_missing_or_broken_url():
+    from meerkly_worker.browser import title_for
+
+    assert title_for("", None, True) == ""
+    assert title_for(None, "not a url", True) is None

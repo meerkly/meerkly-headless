@@ -25,6 +25,7 @@ import re
 import time
 from contextlib import AsyncExitStack
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import snippets
 from .config import Config
@@ -125,6 +126,26 @@ def failure_result(*, error: str, final_url: str | None, loaded_ms: int, status:
         "matchedRule": -1,
         "httpStatus": status,
     }
+
+
+def title_for(title: str | None, final_url: str | None, is_json: bool) -> str | None:
+    """Fall back to the hostname when a JSON document has no title.
+
+    An API endpoint has no <title>, so a JSON crawl would otherwise report "".
+    Chromium's desktop path already shows the host there, so this keeps the
+    workers reporting the same thing for the same URL. HTML pages are left
+    alone: a genuinely untitled page should still read as untitled rather than
+    be given one that was never in the document.
+    """
+    if title:
+        return title
+    if not is_json or not final_url:
+        return title
+    try:
+        host = urlsplit(final_url).hostname
+    except ValueError:
+        return title
+    return host or title
 
 
 def clear_profile_locks(profile_dir: Path, logger) -> None:
@@ -333,6 +354,12 @@ class BrowserManager:
                 await self._drain_error_page(page)
                 return fail(nav_error, self._safe_url(page))
 
+            if main_response is None:
+                # Nothing to classify against: without the navigation response
+                # we cannot see the content type, so a JSON document would be
+                # returned as rendered markup.
+                self._logger.debug("No main-frame navigation response was captured")
+
             # Read a JSON body here, while it is still retrievable. Waiting
             # until after the wait phase loses it: the viewer consumes the
             # stream and response.text() comes back empty.
@@ -377,12 +404,14 @@ class BrowserManager:
             if len(html) >= MAX_HTML_CHARS:
                 self._logger.warn("Extracted HTML truncated at cap", cap=MAX_HTML_CHARS)
 
+            final_url = self._safe_url(page)
+            is_json = raw_json is not None
             return {
                 "success": True,
-                "finalUrl": self._safe_url(page),
-                "title": await self._safe_title(page),
+                "finalUrl": final_url,
+                "title": title_for(await self._safe_title(page), final_url, is_json),
                 "response": html,
-                "format": "json" if raw_json is not None else "html",
+                "format": "json" if is_json else "html",
                 "error": None,
                 "loadedMs": elapsed_ms(),
                 "waitTimedOut": wait_timed_out,
