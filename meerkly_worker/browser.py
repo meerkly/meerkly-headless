@@ -163,7 +163,6 @@ class BrowserManager:
         except Exception:
             pass  # not exposed on every persistent-context path
 
-        context.on("page", self._on_extra_page)
         context.on("close", self._on_context_closed)
 
         pages = context.pages
@@ -171,11 +170,20 @@ class BrowserManager:
         self._page.on("crash", self._on_crash)
         self._page.set_default_timeout(NAVIGATION_TIMEOUT_MS)
 
+        # Registered only AFTER the primary page exists. new_page() fires this
+        # event, so subscribing earlier means the handler runs while _page is
+        # still None, decides the page it just saw is a stray popup, and closes
+        # the one page we need -- leaving goto to fail with "browsingContext is
+        # undefined".
+        context.on("page", self._on_extra_page)
+
         self._logger.info("Browser ready", headless=self._cfg.headless)
 
     def _on_extra_page(self, page) -> None:
         # Block window.open / target=_blank: one page, one job.
-        if page is not self._page:
+        # Never act while _page is None: during a relaunch or crash recovery
+        # that would close the incoming page instead of adopting it.
+        if self._page is not None and page is not self._page:
             asyncio.create_task(self._close_quietly(page))
 
     async def _close_quietly(self, page) -> None:

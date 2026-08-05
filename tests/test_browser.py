@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
@@ -123,3 +125,157 @@ def test_clear_profile_locks_removes_dangling_symlinks(tmp_path, log):
 
 def test_clear_profile_locks_tolerates_a_missing_dir(tmp_path, log):
     clear_profile_locks(tmp_path / "nope", log)  # must not raise
+
+
+# --- primary-page survival -------------------------------------------------
+
+
+def _config(tmp_path):
+    from meerkly_worker.config import Config
+
+    return Config(
+        gateway_url="wss://g/v1/connect",
+        account_base_url="https://a",
+        api_key=None,
+        worker_id="w",
+        worker_name="w",
+        machine_id_override=None,
+        home=tmp_path,
+        headless=True,
+        health_port=0,
+        log_level="error",
+        locale=None,
+        timezone=None,
+        allow_insecure=False,
+    )
+
+
+class _FakePage:
+    def __init__(self):
+        self.closed = False
+        self.handlers = {}
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+    def set_default_timeout(self, ms):
+        self.timeout = ms
+
+    def is_closed(self):
+        return self.closed
+
+    async def close(self):
+        self.closed = True
+
+
+class _FakeContext:
+    """Fires the 'page' event from new_page(), the way Playwright really does."""
+
+    def __init__(self):
+        self.pages = []
+        self._handlers = {}
+        self.browser = None
+
+    def on(self, event, handler):
+        self._handlers[event] = handler
+
+    async def new_page(self):
+        page = _FakePage()
+        self.pages.append(page)
+        handler = self._handlers.get("page")
+        if handler is not None:
+            handler(page)
+        return page
+
+
+class _FakeInvisiblePlaywright:
+    """Stands in for the engine so _launch itself can be exercised."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.context = _FakeContext()
+
+    async def __aenter__(self):
+        return self.context
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+async def test_launch_does_not_close_the_page_it_just_created(tmp_path, log, monkeypatch):
+    """Regression: _launch subscribed to 'page' before the primary page
+    existed, so new_page() fired the handler while _page was still None, it
+    judged that page a stray popup and closed it, and goto then failed with
+    'browsingContext is undefined'.
+
+    This drives the real _launch rather than replaying its steps, so
+    re-ordering those lines fails the test.
+    """
+    import invisible_playwright.async_api as engine
+
+    from meerkly_worker.browser import BrowserManager
+
+    monkeypatch.setattr(engine, "InvisiblePlaywright", _FakeInvisiblePlaywright)
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    await manager._launch()
+    await asyncio.sleep(0.01)
+
+    assert manager._page is not None, "no page was adopted"
+    assert not manager._page.is_closed(), "the primary page was closed at launch"
+    assert manager.is_ready()
+
+
+async def test_launch_passes_the_stealth_options(tmp_path, log, monkeypatch):
+    """humanize must stay off and the fingerprint seed must be the stable one."""
+    import invisible_playwright.async_api as engine
+
+    from meerkly_worker.browser import BrowserManager, fingerprint_seed
+
+    created = {}
+
+    class _Recording(_FakeInvisiblePlaywright):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            created.update(kwargs)
+
+    monkeypatch.setattr(engine, "InvisiblePlaywright", _Recording)
+
+    await BrowserManager(_config(tmp_path), MACHINE, log)._launch()
+
+    assert created["humanize"] is False
+    assert created["seed"] == fingerprint_seed(MACHINE)
+    assert created["headless"] is True
+    assert created["profile_dir"].endswith("profile")
+    # No user agent, viewport, or header overrides -- the engine's own patches
+    # are the whole fingerprint story.
+    assert not {"user_agent", "viewport", "extra_http_headers"} & set(created)
+
+
+async def test_extra_pages_are_still_closed(tmp_path, log):
+    """The popup killer must keep working once the primary page exists."""
+    from meerkly_worker.browser import BrowserManager
+
+    cfg = _config(tmp_path)
+    manager = BrowserManager(cfg, MACHINE, log)
+    context = _FakeContext()
+    manager._page = await context.new_page()
+    context.on("page", manager._on_extra_page)
+
+    popup = await context.new_page()
+    await asyncio.sleep(0.01)
+    assert popup.is_closed(), "a window.open popup should be closed"
+    assert not manager._page.is_closed(), "the primary page must survive"
+
+
+def test_extra_page_handler_is_inert_while_page_is_none(tmp_path, log):
+    """During crash recovery _page is transiently None; closing then would
+    destroy the replacement page instead of adopting it."""
+    from meerkly_worker.browser import BrowserManager
+
+    cfg = _config(tmp_path)
+    manager = BrowserManager(cfg, MACHINE, log)
+    manager._page = None
+    incoming = _FakePage()
+    manager._on_extra_page(incoming)
+    assert not incoming.is_closed()
