@@ -452,21 +452,47 @@ def test_csp_blocked_matcher():
     assert not _is_csp_blocked(None)
 
 
-async def test_settle_pauses_instead_of_capturing_instantly_under_csp(tmp_path, log):
-    """Under a CSP that forbids eval the MutationObserver settle cannot run.
-    Capturing immediately would silently pretend the page had settled."""
+async def test_settle_polls_the_dom_when_csp_blocks_eval(tmp_path, log):
+    """Under a CSP that forbids eval the MutationObserver settle cannot run, so
+    we poll the serialized DOM instead. It must keep waiting while content is
+    still arriving -- a fixed pause captured XHR content too early."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    # Content keeps changing for three polls, then goes quiet.
+    page = _EvalPage(
+        outcomes=[RuntimeError("call to eval() blocked by CSP")],
+        content_outcomes=["<a>", "<ab>", "<abc>"] + ["<abc>"] * 20,
+    )
+
+    await manager._settle(page, 0, 10_000)
+
+    assert page.content_calls >= 5, "should have polled until the DOM stopped changing"
+    # Stops once quiet, rather than burning the whole cap.
+    assert page.content_calls < 20, "should stop polling once settled"
+
+
+async def test_settle_polling_respects_the_cap(tmp_path, log):
+    """A page that never goes quiet must still return at the cap."""
+    import itertools
     import time as _time
 
     from meerkly_worker.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    counter = itertools.count()
     page = _EvalPage(outcomes=[RuntimeError("call to eval() blocked by CSP")])
+    page.content = lambda: _forever_changing(counter)  # noqa: E731
 
     started = _time.monotonic()
-    await manager._settle(page, 0, 10_000)
+    await manager._settle(page, 0, 1200)
     elapsed_ms = (_time.monotonic() - started) * 1000
 
-    assert elapsed_ms >= 900, "should have paused rather than returned instantly"
+    assert 1100 <= elapsed_ms < 3000, f"should stop at the cap, took {elapsed_ms:.0f}ms"
+
+
+async def _forever_changing(counter):
+    return f"<html>{next(counter)}</html>"
 
 
 async def test_settle_does_not_pause_when_eval_works(tmp_path, log):
