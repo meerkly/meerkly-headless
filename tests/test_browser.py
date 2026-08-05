@@ -548,7 +548,7 @@ async def test_json_response_returns_the_raw_body(tmp_path, log):
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, body='{"ok":true}')
 
-    assert await manager._raw_body_if_json(response) == '{"ok":true}'
+    assert await manager._raw_body_if_json(None, response) == '{"ok":true}'
 
 
 async def test_html_response_is_left_to_the_renderer(tmp_path, log):
@@ -557,7 +557,7 @@ async def test_html_response_is_left_to_the_renderer(tmp_path, log):
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "text/html; charset=utf-8"}, body="<html>")
 
-    assert await manager._raw_body_if_json(response) is None
+    assert await manager._raw_body_if_json(None, response) is None
     assert response.text_calls == 0, "must not read the body for HTML"
 
 
@@ -565,8 +565,8 @@ async def test_missing_response_is_handled(tmp_path, log):
     from meerkly_worker.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
-    assert await manager._raw_body_if_json(None) is None
-    assert await manager._raw_body_if_json(_FakeResponse({})) is None
+    assert await manager._raw_body_if_json(None, None) is None
+    assert await manager._raw_body_if_json(None, _FakeResponse({})) is None
 
 
 async def test_unavailable_json_body_falls_back(tmp_path, log):
@@ -575,8 +575,13 @@ async def test_unavailable_json_body_falls_back(tmp_path, log):
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
+    page = _EvalPage()  # no #json / <pre> to recover from either
 
-    assert await manager._raw_body_if_json(response) is None
+    async def no_element(selector):
+        return None
+
+    page.query_selector = no_element
+    assert await manager._raw_body_if_json(page, response) is None
 
 
 async def test_oversized_json_is_capped(tmp_path, log):
@@ -587,4 +592,51 @@ async def test_oversized_json_is_capped(tmp_path, log):
         {"content-type": "application/json"}, body="x" * (MAX_HTML_CHARS + 1000)
     )
 
-    assert len(await manager._raw_body_if_json(response)) == MAX_HTML_CHARS
+    assert len(await manager._raw_body_if_json(None, response)) == MAX_HTML_CHARS
+
+
+async def test_json_recovered_from_the_firefox_viewer_dom(tmp_path, log):
+    """The real failure mode: the viewer consumes the stream, so
+    response.text() raises NS_ERROR_FAILURE and the payload only survives in
+    the viewer's own DOM node."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "application/json"}, raises=True)
+
+    class _El:
+        def __init__(self, text):
+            self._text = text
+
+        async def inner_text(self):
+            return self._text
+
+    page = _EvalPage()
+
+    async def query_selector(selector):
+        return _El('{"ip":"1.2.3.4"}') if selector == "#json" else None
+
+    page.query_selector = query_selector
+
+    assert await manager._raw_body_if_json(page, response) == '{"ip":"1.2.3.4"}'
+
+
+async def test_json_recovered_from_a_pre_element(tmp_path, log):
+    """Chromium renders JSON into a bare <pre> rather than a viewer."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "application/json"}, raises=True)
+
+    class _El:
+        async def inner_text(self):
+            return '{"from":"pre"}'
+
+    page = _EvalPage()
+
+    async def query_selector(selector):
+        return _El() if selector == "pre" else None
+
+    page.query_selector = query_selector
+
+    assert await manager._raw_body_if_json(page, response) == '{"from":"pre"}'

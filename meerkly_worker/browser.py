@@ -335,7 +335,7 @@ class BrowserManager:
             # Read a JSON body here, while it is still retrievable. Waiting
             # until after the wait phase loses it: the viewer consumes the
             # stream and response.text() comes back empty.
-            raw_json = await self._raw_body_if_json(main_response)
+            raw_json = await self._raw_body_if_json(page, main_response)
 
             matched_rule = -1
             rules = job["waitRules"]
@@ -393,7 +393,7 @@ class BrowserManager:
             except Exception:
                 pass  # the page may be gone after a crash
 
-    async def _raw_body_if_json(self, response) -> str | None:
+    async def _raw_body_if_json(self, page, response) -> str | None:
         """The response body verbatim when the document is JSON, else None.
 
         A browser does not hand back JSON -- it renders it. Firefox wraps it in
@@ -411,20 +411,47 @@ class BrowserManager:
         if not _is_json_content_type(content_type):
             return None
 
+        body = None
         try:
             body = await response.text()
         except Exception as err:
-            # Body already discarded by the browser; fall back to the rendered
-            # document rather than failing the crawl.
-            self._logger.debug("JSON body unavailable; using rendered document", error=str(err))
-            return None
+            # Expected on most real pages: the browser's JSON viewer consumes
+            # the stream, so getResponseBody fails with NS_ERROR_FAILURE. Small
+            # responses sometimes stay buffered, which is why this is tried
+            # first rather than skipped.
+            self._logger.debug("JSON body not retrievable from the response", error=str(err))
 
         if not body:
-            self._logger.debug("JSON body was empty; using rendered document")
+            body = await self._json_from_viewer(page)
+
+        if not body:
+            self._logger.debug("Could not recover JSON; using rendered document")
             return None
 
-        self._logger.debug("Returning raw JSON body", contentType=content_type, bytes=len(body))
+        self._logger.debug("Returning raw JSON", contentType=content_type, bytes=len(body))
         return body[:MAX_HTML_CHARS]
+
+    async def _json_from_viewer(self, page) -> str | None:
+        """Pull the payload back out of the browser's JSON viewer.
+
+        Both engines keep the untouched text in the DOM: Firefox's viewer in
+        `#json`, Chromium's plain rendering in a lone `<pre>`. Reading it costs
+        nothing extra and, unlike re-requesting the URL, cannot double-fire a
+        side effect or get a different answer than the page the caller was
+        actually served.
+        """
+        for selector in ("#json", "pre"):
+            try:
+                element = await page.query_selector(selector)
+                if element is None:
+                    continue
+                text = (await element.inner_text()) or ""
+            except Exception:
+                continue
+            if text.strip():
+                self._logger.debug("Recovered JSON from the viewer DOM", selector=selector)
+                return text
+        return None
 
     async def _extract_html(self, page, remaining_ms):
         """Read the page's HTML, retrying once if a navigation ate the context.
