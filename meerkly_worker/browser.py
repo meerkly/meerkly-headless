@@ -62,6 +62,22 @@ def describe_error(err: BaseException) -> str:
     return f"Failed to load: {message.splitlines()[0]}"
 
 
+def _is_destroyed_context(message: str | None) -> bool:
+    """True when an evaluate failed because a navigation replaced the document.
+
+    Firefox and Chromium word this differently, and the wording has changed
+    across versions, so match on the shared idea rather than one exact string.
+    """
+    if not message:
+        return False
+    m = message.lower()
+    return (
+        "execution context" in m
+        or "context was destroyed" in m
+        or "browsingcontext is undefined" in m
+    )
+
+
 def is_interrupted(err: BaseException) -> bool:
     """A goto aborted by a still-committing navigation from the previous job."""
     return re.search(r"interrupted by another", str(err), re.IGNORECASE) is not None
@@ -110,6 +126,8 @@ class BrowserManager:
         self._closed = False
         self._launching: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        # Why the last exec_js fell back, so callers can report a cause.
+        self._last_exec_error: str | None = None
 
     def is_ready(self) -> bool:
         return (
@@ -314,11 +332,16 @@ class BrowserManager:
                     await self._settle(page, job["settleMs"], remaining_ms())
             # branch == "none": domcontentloaded, capture right away
 
-            html = await self.exec_js(
-                page, snippets.EXTRACT_HTML, MAX_HTML_CHARS, remaining_ms(), None
-            )
+            html = await self._extract_html(page, remaining_ms)
             if not isinstance(html, str):
-                result = fail("HTML extraction failed or timed out", self._safe_url(page))
+                # Report why, not just that. A destroyed execution context and a
+                # blown deadline need completely different responses, and a
+                # single generic message made them indistinguishable in the
+                # field.
+                result = fail(
+                    f"HTML extraction failed: {self._last_exec_error or 'unknown'}",
+                    self._safe_url(page),
+                )
                 result["title"] = await self._safe_title(page)
                 return result
             if len(html) >= MAX_HTML_CHARS:
@@ -341,19 +364,50 @@ class BrowserManager:
             except Exception:
                 pass  # the page may be gone after a crash
 
+    async def _extract_html(self, page, remaining_ms):
+        """Read the page's HTML, retrying once if a navigation ate the context.
+
+        A client-side redirect or meta-refresh can destroy the execution
+        context between the wait finishing and this evaluate running, which
+        fails instantly rather than timing out. The document that replaced it
+        is usually the one worth capturing, so settle briefly and try again.
+        """
+        html = await self.exec_js(page, snippets.EXTRACT_HTML, MAX_HTML_CHARS, remaining_ms(), None)
+        if isinstance(html, str):
+            return html
+
+        if not _is_destroyed_context(self._last_exec_error) or remaining_ms() < 500:
+            return None
+
+        self._logger.debug(
+            "Execution context was destroyed mid-extraction; retrying once",
+            error=self._last_exec_error,
+        )
+        await self._settle(page, 0, min(remaining_ms(), 2000))
+        return await self.exec_js(page, snippets.EXTRACT_HTML, MAX_HTML_CHARS, remaining_ms(), None)
+
     async def exec_js(self, page, expression: str, arg, budget_ms: int, fallback):
         """Evaluate in the page, resolving to `fallback` instead of raising.
+
+        The failure reason is kept in _last_exec_error rather than discarded:
+        callers need to distinguish a blown deadline from a destroyed context.
 
         The +1s grace lets the in-page cap timers win while the renderer is
         healthy. Load-bearing: the snippets run in the page's main world, so
         without this deadline a hostile page could stall a job indefinitely.
         """
         try:
-            return await asyncio.wait_for(
+            value = await asyncio.wait_for(
                 page.evaluate(expression, arg), timeout=(budget_ms + 1000) / 1000
             )
-        except Exception:
+        except TimeoutError:
+            self._last_exec_error = f"timed out after {budget_ms + 1000}ms"
             return fallback
+        except Exception as err:
+            self._last_exec_error = str(err).splitlines()[0][:200]
+            return fallback
+        self._last_exec_error = None
+        return value
 
     async def _settle(self, page, settle_ms: int, budget_ms: int) -> None:
         cap = effective_settle_cap(settle_ms, budget_ms)

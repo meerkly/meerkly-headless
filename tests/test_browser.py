@@ -310,3 +310,97 @@ def test_extra_page_handler_is_inert_while_page_is_none(tmp_path, log):
     incoming = _FakePage()
     manager._on_extra_page(incoming)
     assert not incoming.is_closed()
+
+
+# --- exec_js error reporting -----------------------------------------------
+
+
+def test_destroyed_context_matcher():
+    from meerkly_worker.browser import _is_destroyed_context
+
+    assert _is_destroyed_context("Execution context was destroyed")
+    assert _is_destroyed_context("execution context was destroyed, most likely by a navigation")
+    assert _is_destroyed_context('can\'t access property "loadURI", browsingContext is undefined')
+    assert not _is_destroyed_context("timed out after 5000ms")
+    assert not _is_destroyed_context("NS_ERROR_UNKNOWN_HOST")
+    assert not _is_destroyed_context(None)
+    assert not _is_destroyed_context("")
+
+
+class _EvalPage(_FakePage):
+    """A page whose evaluate() outcome is scripted per call."""
+
+    def __init__(self, outcomes):
+        super().__init__()
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    async def evaluate(self, expression, arg=None):
+        self.calls += 1
+        outcome = self.outcomes.pop(0) if self.outcomes else self.outcomes
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+async def test_exec_js_records_why_it_fell_back(tmp_path, log):
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage([RuntimeError("Execution context was destroyed\nsecond line ignored")])
+
+    result = await manager.exec_js(page, "() => 1", None, 100, "FALLBACK")
+
+    assert result == "FALLBACK"
+    assert manager._last_exec_error == "Execution context was destroyed"
+
+
+async def test_exec_js_clears_the_error_on_success(tmp_path, log):
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    manager._last_exec_error = "stale"
+
+    assert await manager.exec_js(_EvalPage(["ok"]), "() => 1", None, 100, None) == "ok"
+    assert manager._last_exec_error is None
+
+
+async def test_extraction_retries_once_when_a_navigation_ate_the_context(tmp_path, log):
+    """A client-side redirect destroys the context between the wait and the
+    extract. The replacement document is the one worth capturing."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage(
+        [
+            RuntimeError("Execution context was destroyed"),  # extract attempt 1
+            None,  # the settle between attempts
+            "<html>after redirect</html>",  # extract attempt 2
+        ]
+    )
+
+    html = await manager._extract_html(page, lambda: 10_000)
+
+    assert html == "<html>after redirect</html>"
+    assert page.calls == 3
+
+
+async def test_extraction_does_not_retry_other_failures(tmp_path, log):
+    """A timeout means the page is wedged; retrying just burns the budget."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage([RuntimeError("NS_ERROR_FAILURE")])
+
+    assert await manager._extract_html(page, lambda: 10_000) is None
+    assert page.calls == 1
+
+
+async def test_extraction_does_not_retry_without_budget(tmp_path, log):
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage([RuntimeError("Execution context was destroyed")])
+
+    assert await manager._extract_html(page, lambda: 100) is None
+    assert page.calls == 1, "must not retry with no budget left"
