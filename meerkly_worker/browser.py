@@ -427,6 +427,9 @@ class BrowserManager:
             body = await self._json_from_viewer(page)
 
         if not body:
+            body = await self._json_by_refetch(page, response.url)
+
+        if not body:
             self._logger.debug("Could not recover JSON; using rendered document")
             return None
 
@@ -453,6 +456,31 @@ class BrowserManager:
             if text.strip():
                 self._logger.debug("Recovered JSON from the viewer DOM", selector=selector)
                 return text
+        return None
+
+    async def _json_by_refetch(self, page, url: str) -> str | None:
+        """Last resort: ask the browser context for the URL again.
+
+        Firefox's JSON viewer replaces its own `#json` node with an interactive
+        tree once its async module runs, so whether that node still exists is a
+        race we lose on faster machines. This uses the context's request API --
+        same cookies and session as the page, no rendering -- and only runs
+        after both cheaper paths have failed.
+
+        It does issue a second GET. That is acceptable here because the only
+        way to reach this point is a document the server already labelled as
+        JSON, which is a read; a caller crawling a side-effecting endpoint
+        would be doing something unusual regardless.
+        """
+        try:
+            api = await page.context.request.get(url)
+            body = await api.text()
+        except Exception as err:
+            self._logger.debug("JSON re-fetch failed", error=str(err))
+            return None
+        if body.strip():
+            self._logger.debug("Recovered JSON by re-fetching", bytes=len(body))
+            return body
         return None
 
     async def _extract_html(self, page, remaining_ms):

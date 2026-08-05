@@ -528,8 +528,39 @@ def test_json_content_type_matcher():
         assert not _is_json_content_type(value), value
 
 
+class _FailingContext:
+    """A context whose request API is unavailable."""
+
+    class _Request:
+        async def get(self, url):
+            raise RuntimeError("no network")
+
+    request = _Request()
+
+
+class _RefetchContext:
+    """A context that answers a re-fetch with the payload."""
+
+    def __init__(self, body):
+        self._body = body
+        self.calls = 0
+
+        class _Request:
+            async def get(_self, url):
+                self.calls += 1
+
+                class _Api:
+                    async def text(_a):
+                        return self._body
+
+                return _Api()
+
+        self.request = _Request()
+
+
 class _FakeResponse:
-    def __init__(self, headers, body=None, raises=False):
+    def __init__(self, headers, body=None, raises=False, url="https://api.example.com/x"):
+        self.url = url
         self.headers = headers
         self._body = body
         self._raises = raises
@@ -576,12 +607,13 @@ async def test_unavailable_json_body_falls_back(tmp_path, log):
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
-    page = _EvalPage()  # no #json / <pre> to recover from either
+    page = _EvalPage()  # no #json / <pre>, and re-fetching fails too
 
     async def no_element(selector):
         return None
 
     page.query_selector = no_element
+    page.context = _FailingContext()
     assert await manager._raw_body_if_json(page, response) is None
 
 
@@ -641,3 +673,47 @@ async def test_json_recovered_from_a_pre_element(tmp_path, log):
     page.query_selector = query_selector
 
     assert await manager._raw_body_if_json(page, response) == '{"from":"pre"}'
+
+
+async def test_json_recovered_by_refetch_when_the_viewer_rewrote_the_dom(tmp_path, log):
+    """Firefox's viewer swaps #json for an interactive tree once its async
+    module runs, so that node is a race we lose on faster machines. The
+    re-fetch is the deterministic backstop."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "application/json"}, raises=True)
+
+    page = _EvalPage()
+
+    async def no_element(selector):
+        return None
+
+    page.query_selector = no_element
+    page.context = _RefetchContext('{"ip":"1.2.3.4"}')
+
+    assert await manager._raw_body_if_json(page, response) == '{"ip":"1.2.3.4"}'
+    assert page.context.calls == 1
+
+
+async def test_refetch_is_not_used_when_the_viewer_dom_still_has_it(tmp_path, log):
+    """The cheap path wins; no second request unless it has to happen."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "application/json"}, raises=True)
+
+    class _El:
+        async def inner_text(self):
+            return '{"from":"dom"}'
+
+    page = _EvalPage()
+
+    async def query_selector(selector):
+        return _El() if selector == "#json" else None
+
+    page.query_selector = query_selector
+    page.context = _RefetchContext('{"from":"network"}')
+
+    assert await manager._raw_body_if_json(page, response) == '{"from":"dom"}'
+    assert page.context.calls == 0, "must not re-fetch when the DOM still had it"
