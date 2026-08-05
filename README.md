@@ -128,8 +128,20 @@ Create a worker key in the dashboard under `/devices`.
 `libasound2t64` in the Dockerfile.
 
 **"Could not reach Meerkly" pointing at localhost.** Inside a container,
-localhost is the container. Use `host.docker.internal` (already mapped in
-`docker-compose.yml`) or the service name.
+localhost is the container. `APP_ENV=development` defaults both URLs to
+localhost, which is right when running from source on the host and wrong in
+Docker. Name the host explicitly in `.env`:
+
+```bash
+APP_ENV=development
+ACCOUNT_BASE_URL=http://host.docker.internal:3000
+GATEWAY_URL=ws://host.docker.internal:8080/v1/connect
+```
+
+`docker-compose.yml` already maps `host.docker.internal` (needed on Linux), and
+the transport guard treats it as host-local, so this does not need
+`ALLOW_INSECURE_GATEWAY`. If the local service binds only to `127.0.0.1`, the
+container still cannot reach it — bind it to `0.0.0.0` as well.
 
 **Container stays `starting` and never reaches `healthy`.** Read the logs — this
 is nearly always enrollment or registration failing, not a broken probe.
