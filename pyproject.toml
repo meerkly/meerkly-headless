@@ -34,6 +34,12 @@ extend-exclude = ["docs"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
+[tool.ruff.lint.per-file-ignores]
+# snippets.py holds JS protocol artifacts transcribed verbatim from
+# api-gateway/spec so they stay byte-diffable against the sibling workers;
+# line-length is a JS-source concern there, not a Python one.
+"meerkly_worker/snippets.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
