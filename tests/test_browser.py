@@ -752,3 +752,17 @@ def test_title_fallback_survives_a_missing_or_broken_url():
 
     assert title_for("", None, True) == ""
     assert title_for(None, "not a url", True) is None
+
+
+def test_empty_document_detection():
+    """An empty document reported as success is silent and expensive: the
+    caller gets nothing, no error says why, and the crawl still earns."""
+    from meerkly_worker.browser import is_empty_document
+
+    assert is_empty_document("")
+    assert is_empty_document("   ")
+    assert is_empty_document("\n\t  \n")
+    assert not is_empty_document("<html></html>")
+    assert not is_empty_document('{"ip":"1.2.3.4"}')
+    # A failed extraction is None, handled by the separate not-a-string branch.
+    assert not is_empty_document(None)

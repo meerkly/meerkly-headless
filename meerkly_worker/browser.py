@@ -148,6 +148,16 @@ def title_for(title: str | None, final_url: str | None, is_json: bool) -> str | 
     return host or title
 
 
+def is_empty_document(html) -> bool:
+    """True when an extraction produced nothing usable.
+
+    Whitespace-only counts: a document of blank lines is not a crawl result.
+    Reporting one as success is silent and expensive -- the caller gets
+    nothing, no error explains why, and the crawl still earns credits.
+    """
+    return isinstance(html, str) and not html.strip()
+
+
 def clear_profile_locks(profile_dir: Path, logger) -> None:
     """Remove lock files a previous run left behind.
 
@@ -390,6 +400,13 @@ class BrowserManager:
             html = (
                 raw_json if raw_json is not None else await self._extract_html(page, remaining_ms)
             )
+            if is_empty_document(html):
+                # An empty document is not a successful crawl. Reporting it as
+                # one is silent and expensive: the caller gets nothing, no error
+                # explains why, and the crawl still earns credits.
+                self._logger.warn("Extraction returned an empty document", url=job["url"])
+                html = None
+
             if not isinstance(html, str):
                 # Report why, not just that. A destroyed execution context and a
                 # blown deadline need completely different responses, and a
