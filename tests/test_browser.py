@@ -328,16 +328,25 @@ def test_destroyed_context_matcher():
 
 
 class _EvalPage(_FakePage):
-    """A page whose evaluate() outcome is scripted per call."""
+    """A page whose evaluate() and content() outcomes are scripted per call."""
 
-    def __init__(self, outcomes):
+    def __init__(self, outcomes=(), content_outcomes=()):
         super().__init__()
         self.outcomes = list(outcomes)
+        self.content_outcomes = list(content_outcomes)
         self.calls = 0
+        self.content_calls = 0
 
     async def evaluate(self, expression, arg=None):
         self.calls += 1
-        outcome = self.outcomes.pop(0) if self.outcomes else self.outcomes
+        outcome = self.outcomes.pop(0) if self.outcomes else None
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    async def content(self):
+        self.content_calls += 1
+        outcome = self.content_outcomes.pop(0) if self.content_outcomes else None
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -365,6 +374,23 @@ async def test_exec_js_clears_the_error_on_success(tmp_path, log):
     assert manager._last_exec_error is None
 
 
+async def test_extraction_uses_content_not_eval_so_csp_cannot_block_it(tmp_path, log):
+    """Regression: extraction via page.evaluate needs eval() in the page, and a
+    site sending CSP without 'unsafe-eval' rejects it with
+    'call to eval() blocked by CSP'. page.content() goes over the protocol."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage(
+        outcomes=[RuntimeError("call to eval() blocked by CSP")],
+        content_outcomes=["<html>captured anyway</html>"],
+    )
+
+    assert await manager._extract_html(page, lambda: 10_000) == "<html>captured anyway</html>"
+    assert page.content_calls == 1
+    assert page.calls == 0, "extraction must not evaluate at all"
+
+
 async def test_extraction_retries_once_when_a_navigation_ate_the_context(tmp_path, log):
     """A client-side redirect destroys the context between the wait and the
     extract. The replacement document is the one worth capturing."""
@@ -372,17 +398,17 @@ async def test_extraction_retries_once_when_a_navigation_ate_the_context(tmp_pat
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(
-        [
-            RuntimeError("Execution context was destroyed"),  # extract attempt 1
-            None,  # the settle between attempts
-            "<html>after redirect</html>",  # extract attempt 2
-        ]
+        outcomes=[None],  # the settle between attempts
+        content_outcomes=[
+            RuntimeError("Execution context was destroyed"),
+            "<html>after redirect</html>",
+        ],
     )
 
     html = await manager._extract_html(page, lambda: 10_000)
 
     assert html == "<html>after redirect</html>"
-    assert page.calls == 3
+    assert page.content_calls == 2
 
 
 async def test_extraction_does_not_retry_other_failures(tmp_path, log):
@@ -390,17 +416,67 @@ async def test_extraction_does_not_retry_other_failures(tmp_path, log):
     from meerkly_worker.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
-    page = _EvalPage([RuntimeError("NS_ERROR_FAILURE")])
+    page = _EvalPage(content_outcomes=[RuntimeError("NS_ERROR_FAILURE")])
 
     assert await manager._extract_html(page, lambda: 10_000) is None
-    assert page.calls == 1
+    assert page.content_calls == 1
 
 
 async def test_extraction_does_not_retry_without_budget(tmp_path, log):
     from meerkly_worker.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
-    page = _EvalPage([RuntimeError("Execution context was destroyed")])
+    page = _EvalPage(content_outcomes=[RuntimeError("Execution context was destroyed")])
 
     assert await manager._extract_html(page, lambda: 100) is None
-    assert page.calls == 1, "must not retry with no budget left"
+    assert page.content_calls == 1, "must not retry with no budget left"
+
+
+async def test_extraction_caps_oversized_html(tmp_path, log):
+    from meerkly_worker.browser import MAX_HTML_CHARS, BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage(content_outcomes=["x" * (MAX_HTML_CHARS + 5000)])
+
+    assert len(await manager._extract_html(page, lambda: 10_000)) == MAX_HTML_CHARS
+
+
+def test_csp_blocked_matcher():
+    from meerkly_worker.browser import _is_csp_blocked
+
+    assert _is_csp_blocked("Page.evaluate: call to eval() blocked by CSP")
+    assert _is_csp_blocked("EvalError: refused to evaluate, unsafe-eval missing")
+    assert _is_csp_blocked("violates Content Security Policy directive")
+    assert not _is_csp_blocked("Execution context was destroyed")
+    assert not _is_csp_blocked("timed out after 5000ms")
+    assert not _is_csp_blocked(None)
+
+
+async def test_settle_pauses_instead_of_capturing_instantly_under_csp(tmp_path, log):
+    """Under a CSP that forbids eval the MutationObserver settle cannot run.
+    Capturing immediately would silently pretend the page had settled."""
+    import time as _time
+
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage(outcomes=[RuntimeError("call to eval() blocked by CSP")])
+
+    started = _time.monotonic()
+    await manager._settle(page, 0, 10_000)
+    elapsed_ms = (_time.monotonic() - started) * 1000
+
+    assert elapsed_ms >= 900, "should have paused rather than returned instantly"
+
+
+async def test_settle_does_not_pause_when_eval_works(tmp_path, log):
+    import time as _time
+
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    page = _EvalPage(outcomes=[None])
+
+    started = _time.monotonic()
+    await manager._settle(page, 0, 10_000)
+    assert (_time.monotonic() - started) * 1000 < 300

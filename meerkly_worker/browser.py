@@ -34,6 +34,8 @@ from .identity import set_browser_version
 NAVIGATION_TIMEOUT_MS = 30000
 MAX_HTML_CHARS = 20_000_000
 CRASH_RELAUNCH_DELAY_SEC = 1.0
+# Pause used in place of the stable settle when a page's CSP forbids eval.
+STABLE_CSP_FALLBACK_MS = 1000
 
 # Firefox's profile lock files (Chromium's are SingletonLock/Socket/Cookie).
 PROFILE_LOCKS = ("lock", ".parentlock", "parent.lock")
@@ -76,6 +78,20 @@ def _is_destroyed_context(message: str | None) -> bool:
         or "context was destroyed" in m
         or "browsingcontext is undefined" in m
     )
+
+
+def _is_csp_blocked(message: str | None) -> bool:
+    """True when an evaluate failed because the page's CSP forbids eval().
+
+    Our snippets run in the page's main world, so a site sending
+    `Content-Security-Policy: script-src` without 'unsafe-eval' blocks them.
+    Playwright's isolated worlds would sidestep this; Firefox over Juggler has
+    none.
+    """
+    if not message:
+        return False
+    m = message.lower()
+    return "blocked by csp" in m or "unsafe-eval" in m or "content security policy" in m
 
 
 def is_interrupted(err: BaseException) -> bool:
@@ -304,12 +320,8 @@ class BrowserManager:
             rules = job["waitRules"]
             if rules:
                 probe_ms = effective_detect_probe(job["detectMs"], remaining_ms())
-                matched_rule = await self.exec_js(
-                    page,
-                    snippets.PROBE_RULES,
-                    {"sels": [rule["if"] for rule in rules], "budget": probe_ms},
-                    probe_ms,
-                    -1,
+                matched_rule = await self._probe_rules(
+                    page, [rule["if"] for rule in rules], probe_ms
                 )
 
             mode = rules[matched_rule]["then"] if matched_rule >= 0 else job["waitFor"]
@@ -321,13 +333,7 @@ class BrowserManager:
             elif branch == "settle":
                 await self._settle(page, job["settleMs"], remaining_ms())
             elif branch == "selector":
-                wait_timed_out = await self.exec_js(
-                    page,
-                    snippets.WAIT_SELECTOR_VISIBLE,
-                    {"sel": mode, "budget": remaining_ms()},
-                    remaining_ms(),
-                    True,
-                )
+                wait_timed_out = await self._wait_selector_visible(page, mode, remaining_ms())
                 if not wait_timed_out:
                     await self._settle(page, job["settleMs"], remaining_ms())
             # branch == "none": domcontentloaded, capture right away
@@ -367,14 +373,21 @@ class BrowserManager:
     async def _extract_html(self, page, remaining_ms):
         """Read the page's HTML, retrying once if a navigation ate the context.
 
-        A client-side redirect or meta-refresh can destroy the execution
-        context between the wait finishing and this evaluate running, which
-        fails instantly rather than timing out. The document that replaced it
-        is usually the one worth capturing, so settle briefly and try again.
+        Uses page.content() rather than an injected snippet. Our snippets run
+        in the page's main world (Firefox over Juggler has no isolated world),
+        so page.evaluate needs eval() in the page -- and any site sending
+        `Content-Security-Policy: script-src` without 'unsafe-eval' blocks it
+        outright with "call to eval() blocked by CSP". content() serializes the
+        document over the protocol instead, so CSP does not apply.
+
+        A client-side redirect or meta-refresh can still destroy the execution
+        context between the wait finishing and this running, which fails
+        instantly rather than timing out. The document that replaced it is
+        usually the one worth capturing, so settle briefly and try again.
         """
-        html = await self.exec_js(page, snippets.EXTRACT_HTML, MAX_HTML_CHARS, remaining_ms(), None)
+        html = await self._page_content(page, remaining_ms())
         if isinstance(html, str):
-            return html
+            return html[:MAX_HTML_CHARS]
 
         if not _is_destroyed_context(self._last_exec_error) or remaining_ms() < 500:
             return None
@@ -384,7 +397,56 @@ class BrowserManager:
             error=self._last_exec_error,
         )
         await self._settle(page, 0, min(remaining_ms(), 2000))
-        return await self.exec_js(page, snippets.EXTRACT_HTML, MAX_HTML_CHARS, remaining_ms(), None)
+        html = await self._page_content(page, remaining_ms())
+        return html[:MAX_HTML_CHARS] if isinstance(html, str) else None
+
+    async def _wait_selector_visible(self, page, selector: str, budget_ms: int) -> bool:
+        """Wait for `selector` to be visible. Returns True on timeout.
+
+        Native Playwright rather than an injected snippet: our snippets run in
+        the page's main world, so a site whose CSP forbids eval() blocks them.
+        A selector that never matches -- including an invalid one -- times out,
+        which is the spec's behaviour for a target selector.
+        """
+        try:
+            await page.wait_for_selector(selector, state="visible", timeout=budget_ms)
+            return False
+        except Exception:
+            return True
+
+    async def _probe_rules(self, page, selectors: list[str], budget_ms: int) -> int:
+        """Index of the first VISIBLE selector by list order, or -1 at budget.
+
+        Native Playwright for the same CSP reason as _wait_selector_visible. A
+        selector that throws is treated as not-found and probing continues --
+        deliberately unlike the target-selector wait, because a bad guard
+        should simply never match rather than abort the probe.
+        """
+        deadline = time.monotonic() + budget_ms / 1000
+        while True:
+            for index, selector in enumerate(selectors):
+                try:
+                    element = await page.query_selector(selector)
+                    if element is not None and await element.is_visible():
+                        return index
+                except Exception:
+                    continue
+            if time.monotonic() >= deadline:
+                return -1
+            await asyncio.sleep(0.05)
+
+    async def _page_content(self, page, budget_ms: int):
+        """page.content() with the same never-raise contract as exec_js."""
+        try:
+            value = await asyncio.wait_for(page.content(), timeout=(budget_ms + 1000) / 1000)
+        except TimeoutError:
+            self._last_exec_error = f"timed out after {budget_ms + 1000}ms"
+            return None
+        except Exception as err:
+            self._last_exec_error = str(err).splitlines()[0][:200]
+            return None
+        self._last_exec_error = None
+        return value
 
     async def exec_js(self, page, expression: str, arg, budget_ms: int, fallback):
         """Evaluate in the page, resolving to `fallback` instead of raising.
@@ -412,6 +474,18 @@ class BrowserManager:
     async def _settle(self, page, settle_ms: int, budget_ms: int) -> None:
         cap = effective_settle_cap(settle_ms, budget_ms)
         await self.exec_js(page, snippets.SETTLE_STABLE, cap, cap, None)
+
+        if _is_csp_blocked(self._last_exec_error):
+            # The stable settle is the one wait that genuinely needs an in-page
+            # MutationObserver -- there is no protocol-level equivalent, unlike
+            # the selector wait and rule probe. Under a CSP that forbids eval we
+            # cannot observe quiet at all, so pause briefly rather than capture
+            # instantly and silently pretend the page had settled.
+            self._logger.warn(
+                "Page CSP blocks eval, so the stable settle degraded to a fixed pause",
+                pauseMs=min(cap, STABLE_CSP_FALLBACK_MS),
+            )
+            await asyncio.sleep(min(cap, STABLE_CSP_FALLBACK_MS) / 1000)
 
     async def _network_idle(self, page, budget_ms: int) -> bool:
         try:
