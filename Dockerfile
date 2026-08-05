@@ -22,7 +22,18 @@ ENV PYTHONUNBUFFERED=1 \
 # this image starts an X server itself.
 
 # tini reaps the browser's children and forwards SIGTERM -- Python as PID 1
-# does neither. The rest are the patched Firefox's runtime libraries.
+# does neither. libgtk-3-0 transitively pulls in the X, atk, pango, cairo and
+# gdk-pixbuf libraries Firefox needs, so they are not listed individually.
+# Deliberately NOT installed: libnss3 / libnspr4. Firefox ships its own copies
+# and resolves them through an $ORIGIN rpath, so the system ones would be dead
+# weight -- verified by loading an HTTPS page, which cannot work without NSS.
+#
+# The fonts are not cosmetic. A container with only the three DejaVu families
+# is a loud fingerprinting signal, since font enumeration is a standard probe
+# and no real desktop looks like that. Liberation adds the metric-compatible
+# Arial/Times/Courier substitutes sites actually test for, and Noto covers
+# non-Latin scripts so international pages lay out correctly rather than
+# rendering as tofu.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tini \
         ca-certificates \
@@ -30,6 +41,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgtk-3-0 \
         libdbus-glib-1-2 \
         libasound2 \
+        libxtst6 \
+        libxss1 \
+        fonts-liberation \
+        fonts-noto-core \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
