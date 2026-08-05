@@ -64,6 +64,19 @@ def describe_error(err: BaseException) -> str:
     return f"Failed to load: {message.splitlines()[0]}"
 
 
+def _is_json_content_type(content_type: str) -> bool:
+    """True for JSON media types, including +json suffixes.
+
+    Covers application/json, application/problem+json, application/ld+json and
+    friends, and text/json. Deliberately excludes text/html even when a page
+    happens to contain JSON.
+    """
+    if not content_type:
+        return False
+    media = content_type.split(";", 1)[0].strip().lower()
+    return media in ("application/json", "text/json") or media.endswith("+json")
+
+
 def _is_destroyed_context(message: str | None) -> bool:
     """True when an evaluate failed because a navigation replaced the document.
 
@@ -301,11 +314,14 @@ class BrowserManager:
         if page is None:
             return fail("Failed to launch browser", None)
 
+        main_response = None
+
         def on_response(response) -> None:
-            nonlocal status
+            nonlocal status, main_response
             try:
                 if response.request.is_navigation_request() and response.frame == page.main_frame:
                     status = response.status
+                    main_response = response
             except Exception:
                 pass  # detached-frame race
 
@@ -315,6 +331,11 @@ class BrowserManager:
             if nav_error is not None:
                 await self._drain_error_page(page)
                 return fail(nav_error, self._safe_url(page))
+
+            # Read a JSON body here, while it is still retrievable. Waiting
+            # until after the wait phase loses it: the viewer consumes the
+            # stream and response.text() comes back empty.
+            raw_json = await self._raw_body_if_json(main_response)
 
             matched_rule = -1
             rules = job["waitRules"]
@@ -338,7 +359,9 @@ class BrowserManager:
                     await self._settle(page, job["settleMs"], remaining_ms())
             # branch == "none": domcontentloaded, capture right away
 
-            html = await self._extract_html(page, remaining_ms)
+            html = (
+                raw_json if raw_json is not None else await self._extract_html(page, remaining_ms)
+            )
             if not isinstance(html, str):
                 # Report why, not just that. A destroyed execution context and a
                 # blown deadline need completely different responses, and a
@@ -369,6 +392,39 @@ class BrowserManager:
                 page.remove_listener("response", on_response)
             except Exception:
                 pass  # the page may be gone after a crash
+
+    async def _raw_body_if_json(self, response) -> str | None:
+        """The response body verbatim when the document is JSON, else None.
+
+        A browser does not hand back JSON -- it renders it. Firefox wraps it in
+        its JSON viewer and Chromium in a <pre>, so page.content() returns a
+        pageful of viewer markup with the data buried inside, which is useless
+        to a caller that asked for an API endpoint. Reading the body straight
+        off the navigation response returns exactly what the server sent.
+        """
+        if response is None:
+            return None
+        try:
+            content_type = (response.headers or {}).get("content-type", "")
+        except Exception:
+            return None
+        if not _is_json_content_type(content_type):
+            return None
+
+        try:
+            body = await response.text()
+        except Exception as err:
+            # Body already discarded by the browser; fall back to the rendered
+            # document rather than failing the crawl.
+            self._logger.debug("JSON body unavailable; using rendered document", error=str(err))
+            return None
+
+        if not body:
+            self._logger.debug("JSON body was empty; using rendered document")
+            return None
+
+        self._logger.debug("Returning raw JSON body", contentType=content_type, bytes=len(body))
+        return body[:MAX_HTML_CHARS]
 
     async def _extract_html(self, page, remaining_ms):
         """Read the page's HTML, retrying once if a navigation ate the context.

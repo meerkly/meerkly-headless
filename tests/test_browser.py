@@ -506,3 +506,85 @@ async def test_settle_does_not_pause_when_eval_works(tmp_path, log):
     started = _time.monotonic()
     await manager._settle(page, 0, 10_000)
     assert (_time.monotonic() - started) * 1000 < 300
+
+
+# --- JSON passthrough -------------------------------------------------------
+
+
+def test_json_content_type_matcher():
+    from meerkly_worker.browser import _is_json_content_type
+
+    for value in [
+        "application/json",
+        "application/json; charset=utf-8",
+        "APPLICATION/JSON",
+        "text/json",
+        "application/problem+json",
+        "application/ld+json; charset=utf-8",
+    ]:
+        assert _is_json_content_type(value), value
+    for value in ["text/html", "text/html; charset=utf-8", "application/xml", "", "text/plain"]:
+        assert not _is_json_content_type(value), value
+
+
+class _FakeResponse:
+    def __init__(self, headers, body=None, raises=False):
+        self.headers = headers
+        self._body = body
+        self._raises = raises
+        self.text_calls = 0
+
+    async def text(self):
+        self.text_calls += 1
+        if self._raises:
+            raise RuntimeError("body already discarded")
+        return self._body
+
+
+async def test_json_response_returns_the_raw_body(tmp_path, log):
+    """A browser renders JSON in a viewer; the caller asked for the data."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "application/json"}, body='{"ok":true}')
+
+    assert await manager._raw_body_if_json(response) == '{"ok":true}'
+
+
+async def test_html_response_is_left_to_the_renderer(tmp_path, log):
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "text/html; charset=utf-8"}, body="<html>")
+
+    assert await manager._raw_body_if_json(response) is None
+    assert response.text_calls == 0, "must not read the body for HTML"
+
+
+async def test_missing_response_is_handled(tmp_path, log):
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    assert await manager._raw_body_if_json(None) is None
+    assert await manager._raw_body_if_json(_FakeResponse({})) is None
+
+
+async def test_unavailable_json_body_falls_back(tmp_path, log):
+    """Better a rendered document than a failed crawl."""
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse({"content-type": "application/json"}, raises=True)
+
+    assert await manager._raw_body_if_json(response) is None
+
+
+async def test_oversized_json_is_capped(tmp_path, log):
+    from meerkly_worker.browser import MAX_HTML_CHARS, BrowserManager
+
+    manager = BrowserManager(_config(tmp_path), MACHINE, log)
+    response = _FakeResponse(
+        {"content-type": "application/json"}, body="x" * (MAX_HTML_CHARS + 1000)
+    )
+
+    assert len(await manager._raw_body_if_json(response)) == MAX_HTML_CHARS
