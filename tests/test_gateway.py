@@ -41,7 +41,8 @@ def test_our_success_result_validates(ws_schema):
             "success": True,
             "finalUrl": "https://example.com/",
             "title": "Example",
-            "html": "<html></html>",
+            "response": "<html></html>",
+            "format": "html",
             "error": None,
             "loadedMs": 812,
             "waitTimedOut": False,
@@ -60,7 +61,8 @@ def test_our_failure_result_validates(ws_schema):
             "success": False,
             "finalUrl": None,
             "title": None,
-            "html": None,
+            "response": None,
+            "format": "html",
             "error": "Navigation timeout after 30000ms",
             "loadedMs": None,
             "waitTimedOut": False,
@@ -97,7 +99,8 @@ def test_result_frame_always_carries_every_field():
         "success",
         "finalUrl",
         "title",
-        "html",
+        "response",
+        "format",
         "error",
         "loadedMs",
         "waitTimedOut",
@@ -105,6 +108,7 @@ def test_result_frame_always_carries_every_field():
         "httpStatus",
     }
     assert frame["finalUrl"] is None
+    assert frame["format"] == "html"
     assert frame["waitTimedOut"] is False
     assert frame["matchedRule"] == -1
     assert frame["httpStatus"] == 0

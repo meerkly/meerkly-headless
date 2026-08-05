@@ -74,7 +74,8 @@ def test_failure_result_is_the_wire_shape():
         "success",
         "finalUrl",
         "title",
-        "html",
+        "response",
+        "format",
         "error",
         "loadedMs",
         "waitTimedOut",
@@ -84,7 +85,7 @@ def test_failure_result_is_the_wire_shape():
     assert result["success"] is False
     assert result["waitTimedOut"] is False
     assert result["matchedRule"] == -1
-    assert result["title"] is None and result["html"] is None
+    assert result["title"] is None and result["response"] is None
 
 
 def test_failure_result_keeps_a_live_status():

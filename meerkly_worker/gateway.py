@@ -22,6 +22,9 @@ from .fetch_spec import parse_fetch_frame
 from .identity import HOST_LOCAL, device_info
 from .urls import PRIVATE_HOST_ERROR, check_url, resolves_to_private
 
+FORMAT_HTML = "html"
+FORMAT_JSON = "json"
+
 MAX_PENDING_JOBS = 3
 INITIAL_BACKOFF_MS = 1000
 MAX_BACKOFF_MS = 30000
@@ -56,7 +59,8 @@ def build_result(job_id: str, result: dict) -> dict:
         "success": bool(result.get("success")),
         "finalUrl": result.get("finalUrl"),
         "title": result.get("title"),
-        "html": result.get("html"),
+        "response": result.get("response"),
+        "format": result.get("format") or FORMAT_HTML,
         "error": result.get("error"),
         "loadedMs": result.get("loadedMs"),
         "waitTimedOut": bool(result.get("waitTimedOut", False)),
