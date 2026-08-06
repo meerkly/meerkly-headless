@@ -1,12 +1,12 @@
-# meerkly-worker — design
+# meerkly-headless — design
 
 **Date:** 2026-08-04
 **Status:** approved
-**Implementation plan:** `docs/superpowers/plans/2026-08-04-meerkly-worker.md`
+**Implementation plan:** `docs/superpowers/plans/2026-08-04-meerkly-headless.md`
 
 ## 1. Purpose
 
-`meerkly-worker` is a Python worker for the Meerkly network. It connects to `api-gateway` over
+`meerkly-headless` is a Python worker for the Meerkly network. It connects to `api-gateway` over
 WebSocket, registers itself, and serves `fetch` jobs by crawling with
 [`invisible_playwright`](https://github.com/feder-cr/invisible_playwright) — a stealth-patched
 Firefox.
@@ -41,7 +41,7 @@ Python 3.11+ (required by the engine), asyncio throughout. Four runtime dependen
 requires), `httpx` (one POST), `psutil` (memory reporting). Tests add `pytest`, `jsonschema`, and
 `ruff`.
 
-Eleven modules under `meerkly_worker/`: `config`, `log`, `identity`, `urls`, `fetch_spec`,
+Eleven modules under `meerkly_headless/`: `config`, `log`, `identity`, `urls`, `fetch_spec`,
 `snippets`, `browser`, `gateway`, `health`, `cli`. Configuration is environment variables only —
 this runs in containers, where a baked-in config file is mostly a way to commit an API key into an
 image. Logging is JSON lines on stdout, because the container runtime already collects that.

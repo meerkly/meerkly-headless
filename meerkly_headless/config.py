@@ -64,7 +64,7 @@ def load_config() -> Config:
         worker_id=worker_id,
         worker_name=_env("MEERKLY_WORKER_NAME") or worker_id,
         machine_id_override=_env("MEERKLY_MACHINE_ID"),
-        home=Path(_env("MEERKLY_HOME") or "~/.meerkly-worker").expanduser(),
+        home=Path(_env("MEERKLY_HOME") or "~/.meerkly-headless").expanduser(),
         # Any value except the literal "false" means true.
         headless=os.environ.get("HEADLESS", "").strip() != "false",
         health_port=_health_port(),

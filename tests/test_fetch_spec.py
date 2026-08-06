@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from meerkly_worker import fetch_spec
+from meerkly_headless import fetch_spec
 
 
 def test_constants_match_the_schema(spec_dir):

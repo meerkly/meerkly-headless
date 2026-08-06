@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm AS build
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
-COPY meerkly_worker ./meerkly_worker
+COPY meerkly_headless ./meerkly_headless
 RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.12-slim-bookworm
@@ -74,5 +74,5 @@ EXPOSE 9090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=4).status==200 else 1)"
 
-ENTRYPOINT ["/usr/bin/tini", "--", "meerkly-worker"]
+ENTRYPOINT ["/usr/bin/tini", "--", "meerkly-headless"]
 CMD ["run"]

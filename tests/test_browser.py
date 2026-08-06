@@ -4,7 +4,7 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
-from meerkly_worker.browser import (
+from meerkly_headless.browser import (
     MAX_HTML_CHARS,
     NAVIGATION_TIMEOUT_MS,
     clear_profile_locks,
@@ -14,7 +14,7 @@ from meerkly_worker.browser import (
     is_interrupted,
     wait_branch,
 )
-from meerkly_worker.log import get_logger
+from meerkly_headless.log import get_logger
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 
@@ -132,7 +132,7 @@ def test_clear_profile_locks_tolerates_a_missing_dir(tmp_path, log):
 
 
 def _config(tmp_path):
-    from meerkly_worker.config import Config
+    from meerkly_headless.config import Config
 
     return Config(
         gateway_url="wss://g/v1/connect",
@@ -223,7 +223,7 @@ async def test_launch_does_not_close_the_page_it_just_created(tmp_path, log, mon
     """
     import invisible_playwright.async_api as engine
 
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     monkeypatch.setattr(engine, "InvisiblePlaywright", _FakeInvisiblePlaywright)
 
@@ -242,7 +242,7 @@ async def test_launch_never_adopts_the_contexts_initial_page(tmp_path, log, monk
     undefined'. We must open our own page and discard that one."""
     import invisible_playwright.async_api as engine
 
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     monkeypatch.setattr(engine, "InvisiblePlaywright", _FakeInvisiblePlaywright)
 
@@ -263,7 +263,7 @@ async def test_launch_passes_the_stealth_options(tmp_path, log, monkeypatch):
     """humanize must stay off and the fingerprint seed must be the stable one."""
     import invisible_playwright.async_api as engine
 
-    from meerkly_worker.browser import BrowserManager, fingerprint_seed
+    from meerkly_headless.browser import BrowserManager, fingerprint_seed
 
     created = {}
 
@@ -287,7 +287,7 @@ async def test_launch_passes_the_stealth_options(tmp_path, log, monkeypatch):
 
 async def test_extra_pages_are_still_closed(tmp_path, log):
     """The popup killer must keep working once the primary page exists."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     cfg = _config(tmp_path)
     manager = BrowserManager(cfg, MACHINE, log)
@@ -304,7 +304,7 @@ async def test_extra_pages_are_still_closed(tmp_path, log):
 def test_extra_page_handler_is_inert_while_page_is_none(tmp_path, log):
     """During crash recovery _page is transiently None; closing then would
     destroy the replacement page instead of adopting it."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     cfg = _config(tmp_path)
     manager = BrowserManager(cfg, MACHINE, log)
@@ -318,7 +318,7 @@ def test_extra_page_handler_is_inert_while_page_is_none(tmp_path, log):
 
 
 def test_destroyed_context_matcher():
-    from meerkly_worker.browser import _is_destroyed_context
+    from meerkly_headless.browser import _is_destroyed_context
 
     assert _is_destroyed_context("Execution context was destroyed")
     assert _is_destroyed_context("execution context was destroyed, most likely by a navigation")
@@ -355,7 +355,7 @@ class _EvalPage(_FakePage):
 
 
 async def test_exec_js_records_why_it_fell_back(tmp_path, log):
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage([RuntimeError("Execution context was destroyed\nsecond line ignored")])
@@ -367,7 +367,7 @@ async def test_exec_js_records_why_it_fell_back(tmp_path, log):
 
 
 async def test_exec_js_clears_the_error_on_success(tmp_path, log):
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     manager._last_exec_error = "stale"
@@ -380,7 +380,7 @@ async def test_extraction_uses_content_not_eval_so_csp_cannot_block_it(tmp_path,
     """Regression: extraction via page.evaluate needs eval() in the page, and a
     site sending CSP without 'unsafe-eval' rejects it with
     'call to eval() blocked by CSP'. page.content() goes over the protocol."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(
@@ -396,7 +396,7 @@ async def test_extraction_uses_content_not_eval_so_csp_cannot_block_it(tmp_path,
 async def test_extraction_retries_once_when_a_navigation_ate_the_context(tmp_path, log):
     """A client-side redirect destroys the context between the wait and the
     extract. The replacement document is the one worth capturing."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(
@@ -415,7 +415,7 @@ async def test_extraction_retries_once_when_a_navigation_ate_the_context(tmp_pat
 
 async def test_extraction_does_not_retry_other_failures(tmp_path, log):
     """A timeout means the page is wedged; retrying just burns the budget."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(content_outcomes=[RuntimeError("NS_ERROR_FAILURE")])
@@ -425,7 +425,7 @@ async def test_extraction_does_not_retry_other_failures(tmp_path, log):
 
 
 async def test_extraction_does_not_retry_without_budget(tmp_path, log):
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(content_outcomes=[RuntimeError("Execution context was destroyed")])
@@ -435,7 +435,7 @@ async def test_extraction_does_not_retry_without_budget(tmp_path, log):
 
 
 async def test_extraction_caps_oversized_html(tmp_path, log):
-    from meerkly_worker.browser import MAX_HTML_CHARS, BrowserManager
+    from meerkly_headless.browser import MAX_HTML_CHARS, BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(content_outcomes=["x" * (MAX_HTML_CHARS + 5000)])
@@ -444,7 +444,7 @@ async def test_extraction_caps_oversized_html(tmp_path, log):
 
 
 def test_csp_blocked_matcher():
-    from meerkly_worker.browser import _is_csp_blocked
+    from meerkly_headless.browser import _is_csp_blocked
 
     assert _is_csp_blocked("Page.evaluate: call to eval() blocked by CSP")
     assert _is_csp_blocked("EvalError: refused to evaluate, unsafe-eval missing")
@@ -458,7 +458,7 @@ async def test_settle_polls_the_dom_when_csp_blocks_eval(tmp_path, log):
     """Under a CSP that forbids eval the MutationObserver settle cannot run, so
     we poll the serialized DOM instead. It must keep waiting while content is
     still arriving -- a fixed pause captured XHR content too early."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     # Content keeps changing for three polls, then goes quiet.
@@ -479,7 +479,7 @@ async def test_settle_polling_respects_the_cap(tmp_path, log):
     import itertools
     import time as _time
 
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     counter = itertools.count()
@@ -500,7 +500,7 @@ async def _forever_changing(counter):
 async def test_settle_does_not_pause_when_eval_works(tmp_path, log):
     import time as _time
 
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     page = _EvalPage(outcomes=[None])
@@ -514,7 +514,7 @@ async def test_settle_does_not_pause_when_eval_works(tmp_path, log):
 
 
 def test_json_content_type_matcher():
-    from meerkly_worker.browser import _is_json_content_type
+    from meerkly_headless.browser import _is_json_content_type
 
     for value in [
         "application/json",
@@ -576,7 +576,7 @@ class _FakeResponse:
 
 async def test_json_response_returns_the_raw_body(tmp_path, log):
     """A browser renders JSON in a viewer; the caller asked for the data."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, body='{"ok":true}')
@@ -585,7 +585,7 @@ async def test_json_response_returns_the_raw_body(tmp_path, log):
 
 
 async def test_html_response_is_left_to_the_renderer(tmp_path, log):
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "text/html; charset=utf-8"}, body="<html>")
@@ -595,7 +595,7 @@ async def test_html_response_is_left_to_the_renderer(tmp_path, log):
 
 
 async def test_missing_response_is_handled(tmp_path, log):
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     assert await manager._raw_body_if_json(None, None) is None
@@ -604,7 +604,7 @@ async def test_missing_response_is_handled(tmp_path, log):
 
 async def test_unavailable_json_body_falls_back(tmp_path, log):
     """Better a rendered document than a failed crawl."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
@@ -619,7 +619,7 @@ async def test_unavailable_json_body_falls_back(tmp_path, log):
 
 
 async def test_oversized_json_is_capped(tmp_path, log):
-    from meerkly_worker.browser import MAX_HTML_CHARS, BrowserManager
+    from meerkly_headless.browser import MAX_HTML_CHARS, BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse(
@@ -633,7 +633,7 @@ async def test_json_recovered_from_the_firefox_viewer_dom(tmp_path, log):
     """The real failure mode: the viewer consumes the stream, so
     response.text() raises NS_ERROR_FAILURE and the payload only survives in
     the viewer's own DOM node."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
@@ -657,7 +657,7 @@ async def test_json_recovered_from_the_firefox_viewer_dom(tmp_path, log):
 
 async def test_json_recovered_from_a_pre_element(tmp_path, log):
     """Chromium renders JSON into a bare <pre> rather than a viewer."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
@@ -680,7 +680,7 @@ async def test_json_recovered_by_refetch_when_the_viewer_rewrote_the_dom(tmp_pat
     """Firefox's viewer swaps #json for an interactive tree once its async
     module runs, so that node is a race we lose on faster machines. The
     re-fetch is the deterministic backstop."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
@@ -699,7 +699,7 @@ async def test_json_recovered_by_refetch_when_the_viewer_rewrote_the_dom(tmp_pat
 
 async def test_refetch_is_not_used_when_the_viewer_dom_still_has_it(tmp_path, log):
     """The cheap path wins; no second request unless it has to happen."""
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(_config(tmp_path), MACHINE, log)
     response = _FakeResponse({"content-type": "application/json"}, raises=True)
@@ -726,14 +726,14 @@ async def test_refetch_is_not_used_when_the_viewer_dom_still_has_it(tmp_path, lo
 def test_json_without_a_title_falls_back_to_the_hostname():
     """An API endpoint has no <title>, so a JSON crawl would report "".
     Desktop's Chromium path already shows the host; this keeps them agreeing."""
-    from meerkly_worker.browser import title_for
+    from meerkly_headless.browser import title_for
 
     assert title_for("", "https://ipwho.is/", True) == "ipwho.is"
     assert title_for(None, "https://api.example.com/v1/ip?x=1", True) == "api.example.com"
 
 
 def test_a_real_title_is_never_overwritten():
-    from meerkly_worker.browser import title_for
+    from meerkly_headless.browser import title_for
 
     assert title_for("ipwho.is API", "https://ipwho.is/", True) == "ipwho.is API"
     assert title_for("Example Domain", "https://example.com/", False) == "Example Domain"
@@ -742,14 +742,14 @@ def test_a_real_title_is_never_overwritten():
 def test_untitled_html_stays_untitled():
     """A genuinely untitled page should read as untitled rather than be given a
     title that was never in the document."""
-    from meerkly_worker.browser import title_for
+    from meerkly_headless.browser import title_for
 
     assert title_for("", "https://example.com/", False) == ""
     assert title_for(None, "https://example.com/", False) is None
 
 
 def test_title_fallback_survives_a_missing_or_broken_url():
-    from meerkly_worker.browser import title_for
+    from meerkly_headless.browser import title_for
 
     assert title_for("", None, True) == ""
     assert title_for(None, "not a url", True) is None
@@ -758,7 +758,7 @@ def test_title_fallback_survives_a_missing_or_broken_url():
 def test_empty_document_detection():
     """An empty document reported as success is silent and expensive: the
     caller gets nothing, no error says why, and the crawl still earns."""
-    from meerkly_worker.browser import is_empty_document
+    from meerkly_headless.browser import is_empty_document
 
     assert is_empty_document("")
     assert is_empty_document("   ")
@@ -775,7 +775,7 @@ def test_empty_document_detection():
 def test_clear_profile_state_drops_identity_but_keeps_the_cache(tmp_path, log):
     """The cache carries no cross-site identity and is what makes a repeat
     crawl answer 304 with current content, which earns credits."""
-    from meerkly_worker.browser import clear_profile_state
+    from meerkly_headless.browser import clear_profile_state
 
     profile = tmp_path / "profile"
     (profile / "storage" / "default").mkdir(parents=True)
@@ -798,7 +798,7 @@ def test_clear_profile_state_drops_identity_but_keeps_the_cache(tmp_path, log):
 
 
 def test_clear_profile_state_tolerates_a_bare_profile(tmp_path, log):
-    from meerkly_worker.browser import clear_profile_state
+    from meerkly_headless.browser import clear_profile_state
 
     profile = tmp_path / "profile"
     profile.mkdir()
@@ -808,14 +808,14 @@ def test_clear_profile_state_tolerates_a_bare_profile(tmp_path, log):
 async def test_profile_resets_after_the_configured_number_of_jobs(tmp_path, log, monkeypatch):
     from dataclasses import replace
 
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(replace(_config(tmp_path), profile_reset_jobs=3), MACHINE, log)
     cleared = []
     torn_down = []
 
     monkeypatch.setattr(
-        "meerkly_worker.browser.clear_profile_state", lambda d, lg: cleared.append(d)
+        "meerkly_headless.browser.clear_profile_state", lambda d, lg: cleared.append(d)
     )
 
     async def fake_teardown():
@@ -839,12 +839,12 @@ async def test_profile_resets_after_the_configured_number_of_jobs(tmp_path, log,
 async def test_profile_reset_can_be_disabled(tmp_path, log, monkeypatch):
     from dataclasses import replace
 
-    from meerkly_worker.browser import BrowserManager
+    from meerkly_headless.browser import BrowserManager
 
     manager = BrowserManager(replace(_config(tmp_path), profile_reset_jobs=0), MACHINE, log)
     cleared = []
     monkeypatch.setattr(
-        "meerkly_worker.browser.clear_profile_state", lambda d, lg: cleared.append(d)
+        "meerkly_headless.browser.clear_profile_state", lambda d, lg: cleared.append(d)
     )
 
     manager._jobs_since_reset = 10_000

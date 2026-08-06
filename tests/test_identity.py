@@ -5,10 +5,10 @@ import uuid
 import httpx
 import pytest
 
-from meerkly_worker import identity
-from meerkly_worker.config import Config
-from meerkly_worker.identity import DeviceTokenStore, EnrollResult
-from meerkly_worker.log import get_logger
+from meerkly_headless import identity
+from meerkly_headless.config import Config
+from meerkly_headless.identity import DeviceTokenStore, EnrollResult
+from meerkly_headless.log import get_logger
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 OTHER = "3f2b7c1e-0000-4000-8000-000000000002"

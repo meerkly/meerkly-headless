@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "meerkly-worker"
+name = "meerkly-headless"
 version = "1.0.0"
 description = "Meerkly server worker (invisible_playwright / Firefox)"
 requires-python = ">=3.11"
@@ -18,10 +18,10 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonschema>=4.21", "ruff>=0.6"]
 
 [project.scripts]
-meerkly-worker = "meerkly_worker.cli:main"
+meerkly-headless = "meerkly_headless.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["meerkly_worker*"]
+include = ["meerkly_headless*"]
 
 [tool.ruff]
 line-length = 100
@@ -38,7 +38,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 # snippets.py holds JS protocol artifacts transcribed verbatim from
 # api-gateway/spec so they stay byte-diffable against the sibling workers;
 # line-length is a JS-source concern there, not a Python one.
-"meerkly_worker/snippets.py" = ["E501"]
+"meerkly_headless/snippets.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

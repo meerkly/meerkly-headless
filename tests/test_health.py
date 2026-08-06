@@ -3,8 +3,8 @@ import json
 import httpx
 import pytest
 
-from meerkly_worker.health import HealthServer
-from meerkly_worker.log import get_logger
+from meerkly_headless.health import HealthServer
+from meerkly_headless.log import get_logger
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 

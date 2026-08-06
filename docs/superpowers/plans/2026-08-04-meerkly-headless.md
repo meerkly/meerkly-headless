@@ -1,4 +1,4 @@
-# meerkly-worker Implementation Plan
+# meerkly-headless Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -28,12 +28,12 @@
 ## File Structure
 
 ```
-meerkly-worker/
+meerkly-headless/
 ├── pyproject.toml
 ├── .gitignore  .dockerignore  .env.example
 ├── Dockerfile  docker-entrypoint.sh  docker-compose.yml
 ├── README.md  CLAUDE.md
-├── meerkly_worker/
+├── meerkly_headless/
 │   ├── __init__.py       # __version__
 │   ├── config.py         # environment variables -> Config
 │   ├── log.py            # JSON lines to stdout
@@ -44,7 +44,7 @@ meerkly-worker/
 │   ├── browser.py        # engine lifecycle + navigate_and_extract
 │   ├── gateway.py        # WebSocket client
 │   ├── health.py         # /healthz, /readyz
-│   └── cli.py            # `meerkly-worker run`
+│   └── cli.py            # `meerkly-headless run`
 └── tests/
     ├── conftest.py
     ├── test_config.py  test_identity.py  test_urls.py
@@ -61,12 +61,12 @@ Deliberately absent: no `config.json` (environment only — this runs in contain
 ### Task 1: Scaffolding, config, and logging
 
 **Files:**
-- Create: `pyproject.toml`, `.gitignore`, `.env.example`, `meerkly_worker/__init__.py`, `meerkly_worker/config.py`, `meerkly_worker/log.py`, `tests/conftest.py`
+- Create: `pyproject.toml`, `.gitignore`, `.env.example`, `meerkly_headless/__init__.py`, `meerkly_headless/config.py`, `meerkly_headless/log.py`, `tests/conftest.py`
 - Test: `tests/test_config.py`
 
 **Interfaces:**
 - Produces:
-  - `meerkly_worker.__version__: str`
+  - `meerkly_headless.__version__: str`
   - `config.Config` — frozen dataclass: `gateway_url, account_base_url, api_key, worker_id, worker_name, machine_id_override, home, headless, health_port, log_level, locale, timezone, allow_insecure`
   - `config.load_config() -> Config`
   - `log.get_logger(level: str) -> Logger` with `.debug/.info/.warn/.error(message, **fields)`
@@ -86,7 +86,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "meerkly-worker"
+name = "meerkly-headless"
 version = "1.0.0"
 description = "Meerkly server worker (invisible_playwright / Firefox)"
 requires-python = ">=3.11"
@@ -101,10 +101,10 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonschema>=4.21", "ruff>=0.6"]
 
 [project.scripts]
-meerkly-worker = "meerkly_worker.cli:main"
+meerkly-headless = "meerkly_headless.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["meerkly_worker*"]
+include = ["meerkly_headless*"]
 
 [tool.ruff]
 line-length = 100
@@ -118,7 +118,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 ```
 
-- [ ] **Step 2: Create `.gitignore` and `meerkly_worker/__init__.py`**
+- [ ] **Step 2: Create `.gitignore` and `meerkly_headless/__init__.py`**
 
 `.gitignore`:
 
@@ -134,7 +134,7 @@ build/
 .env
 ```
 
-`meerkly_worker/__init__.py`:
+`meerkly_headless/__init__.py`:
 
 ```python
 """Meerkly server worker built on invisible_playwright (patched Firefox)."""
@@ -194,7 +194,7 @@ The `spec_dir` fixture **raises rather than skips**: a conformance suite that qu
 ```python
 import pytest
 
-from meerkly_worker.config import load_config
+from meerkly_headless.config import load_config
 
 ALL_VARS = [
     "GATEWAY_URL",
@@ -298,9 +298,9 @@ def test_home_honours_the_env_var(home):
 python3 -m pytest tests/test_config.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'meerkly_worker.config'`.
+Expected: `ModuleNotFoundError: No module named 'meerkly_headless.config'`.
 
-- [ ] **Step 6: Implement `meerkly_worker/config.py`**
+- [ ] **Step 6: Implement `meerkly_headless/config.py`**
 
 ```python
 """Configuration, from environment variables only.
@@ -365,7 +365,7 @@ def load_config() -> Config:
         worker_id=worker_id,
         worker_name=_env("MEERKLY_WORKER_NAME") or worker_id,
         machine_id_override=_env("MEERKLY_MACHINE_ID"),
-        home=Path(_env("MEERKLY_HOME") or "~/.meerkly-worker").expanduser(),
+        home=Path(_env("MEERKLY_HOME") or "~/.meerkly-headless").expanduser(),
         # Any value except the literal "false" means true.
         headless=os.environ.get("HEADLESS", "").strip() != "false",
         health_port=_health_port(),
@@ -388,7 +388,7 @@ def _health_port() -> int:
     return port if 0 <= port <= 65535 else DEFAULT_HEALTH_PORT
 ```
 
-- [ ] **Step 7: Implement `meerkly_worker/log.py`**
+- [ ] **Step 7: Implement `meerkly_headless/log.py`**
 
 Structured JSON to stdout; Docker collects it. No file rotation, no ring buffer.
 
@@ -483,7 +483,7 @@ git add -A && git commit -m "feat: scaffolding, environment config, and JSON log
 ### Task 2: `urls.py` — validation and the SSRF guard
 
 **Files:**
-- Create: `meerkly_worker/urls.py`
+- Create: `meerkly_headless/urls.py`
 - Test: `tests/test_urls.py`
 
 **Interfaces:**
@@ -514,8 +514,8 @@ Firefox will happily resolve every one of those to loopback, so `as_ipv4()` reim
 ```python
 import pytest
 
-from meerkly_worker.urls import as_ipv4, check_url, is_private_ip, resolves_to_private
-from meerkly_worker import urls as urls_module
+from meerkly_headless.urls import as_ipv4, check_url, is_private_ip, resolves_to_private
+from meerkly_headless import urls as urls_module
 
 
 @pytest.mark.parametrize("value", ["", "   ", None, 42, [], {}])
@@ -649,9 +649,9 @@ async def test_public_and_unresolvable_both_proceed(monkeypatch):
 python3 -m pytest tests/test_urls.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'meerkly_worker.urls'`.
+Expected: `ModuleNotFoundError: No module named 'meerkly_headless.urls'`.
 
-- [ ] **Step 3: Implement `meerkly_worker/urls.py`**
+- [ ] **Step 3: Implement `meerkly_headless/urls.py`**
 
 ```python
 """URL validation and the SSRF guard for gateway-dispatched jobs.
@@ -846,7 +846,7 @@ Expected: all pass (roughly 90 parametrized cases).
 
 ```bash
 python3 -c "
-from meerkly_worker.urls import check_url
+from meerkly_headless.urls import check_url
 for h in ['2130706433','0x7f000001','127.1','0177.0.0.1','169.254.169.254','localhost']:
     assert not check_url(f'https://{h}/', block_private=True).valid, f'LEAK: {h}'
     print(f'{h:18} blocked')
@@ -860,7 +860,7 @@ Expected: six `blocked` lines then `SSRF guard OK`.
 
 ```bash
 ruff check . && ruff format --check . && python3 -m pytest -q
-git add meerkly_worker/urls.py tests/test_urls.py && git commit -m "feat: URL validation and SSRF guard"
+git add meerkly_headless/urls.py tests/test_urls.py && git commit -m "feat: URL validation and SSRF guard"
 ```
 
 ---
@@ -868,7 +868,7 @@ git add meerkly_worker/urls.py tests/test_urls.py && git commit -m "feat: URL va
 ### Task 3: `fetch_spec.py` — the wait contract (SPEC CONFORMANCE)
 
 **Files:**
-- Create: `meerkly_worker/fetch_spec.py`
+- Create: `meerkly_headless/fetch_spec.py`
 - Test: `tests/test_fetch_spec.py`
 
 **Interfaces:**
@@ -897,7 +897,7 @@ import math
 
 import pytest
 
-from meerkly_worker import fetch_spec
+from meerkly_headless import fetch_spec
 
 
 def test_constants_match_the_schema(spec_dir):
@@ -1009,9 +1009,9 @@ def test_budget_is_a_third_clamp():
 python3 -m pytest tests/test_fetch_spec.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'meerkly_worker.fetch_spec'`.
+Expected: `ModuleNotFoundError: No module named 'meerkly_headless.fetch_spec'`.
 
-- [ ] **Step 3: Implement `meerkly_worker/fetch_spec.py`**
+- [ ] **Step 3: Implement `meerkly_headless/fetch_spec.py`**
 
 ```python
 """The fetch-job wire contract.
@@ -1116,7 +1116,7 @@ Expected: an error mentioning `Protocol spec not found` — **not** "skipped".
 
 ```bash
 ruff check . && ruff format --check . && python3 -m pytest -q
-git add meerkly_worker/fetch_spec.py tests/test_fetch_spec.py
+git add meerkly_headless/fetch_spec.py tests/test_fetch_spec.py
 git commit -m "feat: fetch spec parsing with vector conformance"
 ```
 
@@ -1125,7 +1125,7 @@ git commit -m "feat: fetch spec parsing with vector conformance"
 ### Task 4: `identity.py` — machine ID, device token, enrollment
 
 **Files:**
-- Create: `meerkly_worker/identity.py`
+- Create: `meerkly_headless/identity.py`
 - Test: `tests/test_identity.py`
 
 **Interfaces:**
@@ -1155,10 +1155,10 @@ import uuid
 import httpx
 import pytest
 
-from meerkly_worker import identity
-from meerkly_worker.config import Config
-from meerkly_worker.identity import DeviceTokenStore, EnrollResult
-from meerkly_worker.log import get_logger
+from meerkly_headless import identity
+from meerkly_headless.config import Config
+from meerkly_headless.identity import DeviceTokenStore, EnrollResult
+from meerkly_headless.log import get_logger
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 OTHER = "3f2b7c1e-0000-4000-8000-000000000002"
@@ -1469,9 +1469,9 @@ async def test_no_key_and_no_token_is_unpaired(tmp_path, log):
 python3 -m pytest tests/test_identity.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'meerkly_worker.identity'`.
+Expected: `ModuleNotFoundError: No module named 'meerkly_headless.identity'`.
 
-- [ ] **Step 3: Implement `meerkly_worker/identity.py`**
+- [ ] **Step 3: Implement `meerkly_headless/identity.py`**
 
 ```python
 """Machine identity, device-token storage, and worker-key enrollment.
@@ -1800,7 +1800,7 @@ Expected: all pass (roughly 35 cases with parametrization).
 
 ```bash
 ruff check . && ruff format --check . && python3 -m pytest -q
-git add meerkly_worker/identity.py tests/test_identity.py
+git add meerkly_headless/identity.py tests/test_identity.py
 git commit -m "feat: machine identity, token storage, and worker-key enrollment"
 ```
 
@@ -1809,7 +1809,7 @@ git commit -m "feat: machine identity, token storage, and worker-key enrollment"
 ### Task 5: `snippets.py` and `browser.py` — the crawl engine
 
 **Files:**
-- Create: `meerkly_worker/snippets.py`, `meerkly_worker/browser.py`
+- Create: `meerkly_headless/snippets.py`, `meerkly_headless/browser.py`
 - Test: `tests/test_snippets.py`, `tests/test_browser.py`
 
 **Interfaces:**
@@ -1835,7 +1835,7 @@ The wait snippets run in the page's **main world**. `invisible_playwright` drive
 `tests/test_snippets.py`:
 
 ```python
-from meerkly_worker import snippets
+from meerkly_headless import snippets
 
 
 def test_settle_observer_excludes_attributes():
@@ -1885,7 +1885,7 @@ def test_extract_html_caps_output():
     assert "slice(0, cap)" in snippets.EXTRACT_HTML
 ```
 
-- [ ] **Step 2: Implement `meerkly_worker/snippets.py`**
+- [ ] **Step 2: Implement `meerkly_headless/snippets.py`**
 
 ```python
 """JavaScript injected into the page to implement the wait conditions.
@@ -2021,8 +2021,8 @@ import pytest
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
-from meerkly_worker import browser as browser_module
-from meerkly_worker.browser import (
+from meerkly_headless import browser as browser_module
+from meerkly_headless.browser import (
     MAX_HTML_CHARS,
     NAVIGATION_TIMEOUT_MS,
     clear_profile_locks,
@@ -2032,7 +2032,7 @@ from meerkly_worker.browser import (
     is_interrupted,
     wait_branch,
 )
-from meerkly_worker.log import get_logger
+from meerkly_headless.log import get_logger
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 
@@ -2146,7 +2146,7 @@ python3 -m pytest tests/test_snippets.py tests/test_browser.py -v
 
 Expected: `ModuleNotFoundError` for both modules.
 
-- [ ] **Step 5: Implement `meerkly_worker/browser.py`**
+- [ ] **Step 5: Implement `meerkly_headless/browser.py`**
 
 ```python
 """The crawl engine: invisible_playwright (patched Firefox).
@@ -2553,7 +2553,7 @@ Expected: 7 + 11 passed.
 
 ```bash
 ruff check . && ruff format --check . && python3 -m pytest -q
-git add meerkly_worker/snippets.py meerkly_worker/browser.py tests/test_snippets.py tests/test_browser.py
+git add meerkly_headless/snippets.py meerkly_headless/browser.py tests/test_snippets.py tests/test_browser.py
 git commit -m "feat: crawl engine with spec wait semantics"
 ```
 
@@ -2562,7 +2562,7 @@ git commit -m "feat: crawl engine with spec wait semantics"
 ### Task 6: `gateway.py` — the WebSocket client (SPEC CONFORMANCE)
 
 **Files:**
-- Create: `meerkly_worker/gateway.py`
+- Create: `meerkly_headless/gateway.py`
 - Test: `tests/test_gateway.py`
 
 **Interfaces:**
@@ -2594,7 +2594,7 @@ import json
 import pytest
 from jsonschema import Draft202012Validator
 
-from meerkly_worker import gateway as gw
+from meerkly_headless import gateway as gw
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 
@@ -2711,9 +2711,9 @@ def test_backoff_constants():
 python3 -m pytest tests/test_gateway.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'meerkly_worker.gateway'`.
+Expected: `ModuleNotFoundError: No module named 'meerkly_headless.gateway'`.
 
-- [ ] **Step 3: Implement `meerkly_worker/gateway.py`**
+- [ ] **Step 3: Implement `meerkly_headless/gateway.py`**
 
 ```python
 """WebSocket client for api-gateway.
@@ -2966,7 +2966,7 @@ Expected: all pass, with `test_all_ws_frame_vectors` covering 14 cases.
 
 ```bash
 ruff check . && ruff format --check . && python3 -m pytest -q
-git add meerkly_worker/gateway.py tests/test_gateway.py
+git add meerkly_headless/gateway.py tests/test_gateway.py
 git commit -m "feat: gateway WebSocket client with ws-frames conformance"
 ```
 
@@ -2975,7 +2975,7 @@ git commit -m "feat: gateway WebSocket client with ws-frames conformance"
 ### Task 7: `health.py` and `cli.py`
 
 **Files:**
-- Create: `meerkly_worker/health.py`, `meerkly_worker/cli.py`
+- Create: `meerkly_headless/health.py`, `meerkly_headless/cli.py`
 - Test: `tests/test_health.py`
 
 **Interfaces:**
@@ -2995,8 +2995,8 @@ import json
 import httpx
 import pytest
 
-from meerkly_worker.health import HealthServer
-from meerkly_worker.log import get_logger
+from meerkly_headless.health import HealthServer
+from meerkly_headless.log import get_logger
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 
@@ -3112,9 +3112,9 @@ async def test_body_shape_is_stable(log):
 python3 -m pytest tests/test_health.py -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'meerkly_worker.health'`.
+Expected: `ModuleNotFoundError: No module named 'meerkly_headless.health'`.
 
-- [ ] **Step 3: Implement `meerkly_worker/health.py`**
+- [ ] **Step 3: Implement `meerkly_headless/health.py`**
 
 ```python
 """Liveness and readiness endpoints for container probes.
@@ -3206,10 +3206,10 @@ class HealthServer:
         await writer.drain()
 ```
 
-- [ ] **Step 4: Implement `meerkly_worker/cli.py`**
+- [ ] **Step 4: Implement `meerkly_headless/cli.py`**
 
 ```python
-"""Entry point: `meerkly-worker run`."""
+"""Entry point: `meerkly-headless run`."""
 
 from __future__ import annotations
 
@@ -3236,7 +3236,7 @@ UNPAIRED_MESSAGE = (
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="meerkly-worker", description="Meerkly server worker")
+    parser = argparse.ArgumentParser(prog="meerkly-headless", description="Meerkly server worker")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("command", nargs="?", choices=["run"], help="command to run")
 
@@ -3262,7 +3262,7 @@ async def run() -> int:
         print(str(err), file=sys.stderr)
         return 1
 
-    logger.info("Starting meerkly-worker", machineId=machine_id, version=__version__)
+    logger.info("Starting meerkly-headless", machineId=machine_id, version=__version__)
 
     store = DeviceTokenStore(cfg.home, machine_id, logger)
     token = await obtain_device_token(cfg, machine_id, store, logger)
@@ -3328,8 +3328,8 @@ async def _shutdown(gateway, health, browser) -> None:
 
 ```bash
 python3 -m pytest tests/test_health.py -v
-python3 -m pip install -e '.[dev]' >/dev/null && meerkly-worker --version
-MEERKLY_HOME=/tmp/mw-probe meerkly-worker run; echo "exit=$?"
+python3 -m pip install -e '.[dev]' >/dev/null && meerkly-headless --version
+MEERKLY_HOME=/tmp/mw-probe meerkly-headless run; echo "exit=$?"
 ```
 
 Expected: 7 passed; the version prints; the unpaired run prints the pairing message and `exit=1`.
@@ -3338,7 +3338,7 @@ Expected: 7 passed; the version prints; the unpaired run prints the pairing mess
 
 ```bash
 ruff check . && ruff format --check . && python3 -m pytest -q
-git add meerkly_worker/health.py meerkly_worker/cli.py tests/test_health.py
+git add meerkly_headless/health.py meerkly_headless/cli.py tests/test_health.py
 git commit -m "feat: health endpoints and CLI entry point"
 ```
 
@@ -3405,7 +3405,7 @@ FROM python:3.12-slim-bookworm AS build
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
-COPY meerkly_worker ./meerkly_worker
+COPY meerkly_headless ./meerkly_headless
 RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.12-slim-bookworm
@@ -3445,7 +3445,7 @@ EXPOSE 9090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9090/healthz', timeout=4).status==200 else 1)"
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "meerkly-worker"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "meerkly-headless"]
 CMD ["run"]
 ```
 
@@ -3502,7 +3502,7 @@ Empty-string defaults are safe: `config.py` treats a blank environment variable 
 - [ ] **Step 5: Build the image**
 
 ```bash
-docker build -t meerkly-worker:dev .
+docker build -t meerkly-headless:dev .
 ```
 
 Expected: a successful build. If apt fails on `libasound2`, the base has moved to the `t64` naming — use `libasound2t64` and record it in `CLAUDE.md`.
@@ -3510,9 +3510,9 @@ Expected: a successful build. If apt fails on `libasound2`, the base has moved t
 - [ ] **Step 6: Verify the image internals**
 
 ```bash
-docker run --rm meerkly-worker:dev --version
-docker run --rm --entrypoint sh meerkly-worker:dev -c 'id && ls /opt/engine && echo "autofix=$INVISIBLE_CORE_AUTOFIX"'
-docker run --rm meerkly-worker:dev run; echo "exit=$?"
+docker run --rm meerkly-headless:dev --version
+docker run --rm --entrypoint sh meerkly-headless:dev -c 'id && ls /opt/engine && echo "autofix=$INVISIBLE_CORE_AUTOFIX"'
+docker run --rm meerkly-headless:dev run; echo "exit=$?"
 ```
 
 Expected: the version prints; `id` shows `uid=10001(worker)` — **not root**; `/opt/engine` holds a firefox directory; `autofix=off`; and the unpaired run prints the pairing message with `exit=1` rather than crashing or hanging.
@@ -3544,10 +3544,10 @@ Expected: the gateway listening on `:8080`. Start the account app the same way y
 - [ ] **Step 2: Run the worker against them**
 
 ```bash
-APP_ENV=development MEERKLY_API_KEY=mk_wk_yourkey HEADLESS=true meerkly-worker run
+APP_ENV=development MEERKLY_API_KEY=mk_wk_yourkey HEADLESS=true meerkly-headless run
 ```
 
-Expected log lines, in order: `Starting meerkly-worker`, `Enrolled with the account service`, `Browser ready`, `Sent registration`, `Registered with gateway`.
+Expected log lines, in order: `Starting meerkly-headless`, `Enrolled with the account service`, `Browser ready`, `Sent registration`, `Registered with gateway`.
 
 - [ ] **Step 3: Confirm the gateway sees it and serve a crawl**
 
@@ -3699,7 +3699,7 @@ Record what you actually observed: the commands above, Firefox's real error-page
 
 - [ ] **Step 12: Write `README.md`**
 
-Cover: what the worker is (a Meerkly worker that crawls with stealth-patched Firefox and speaks the `api-gateway` protocol); quick start with Docker Compose (`.env` with `MEERKLY_API_KEY`, then `docker compose up -d`); quick start from source (`pip install -e .`, `python -m invisible_playwright fetch`, `meerkly-worker run`); the full environment-variable table from `config.py`; the note that `$MEERKLY_HOME` holds plaintext 0600 secrets and why; and troubleshooting for the unpaired message, the `libasound2` naming, and the container loopback hint.
+Cover: what the worker is (a Meerkly worker that crawls with stealth-patched Firefox and speaks the `api-gateway` protocol); quick start with Docker Compose (`.env` with `MEERKLY_API_KEY`, then `docker compose up -d`); quick start from source (`pip install -e .`, `python -m invisible_playwright fetch`, `meerkly-headless run`); the full environment-variable table from `config.py`; the note that `$MEERKLY_HOME` holds plaintext 0600 secrets and why; and troubleshooting for the unpaired message, the `libasound2` naming, and the container loopback hint.
 
 - [ ] **Step 13: Write `CLAUDE.md`**
 
@@ -3716,14 +3716,14 @@ Keep it short and load-bearing. It must cover:
 Under "Repository layout", after the `meerkly-headless/` entry:
 
 ```markdown
-- `meerkly-worker/` — a Python worker for headless servers, using
+- `meerkly-headless/` — a Python worker for headless servers, using
   [invisible_playwright](https://github.com/feder-cr/invisible_playwright) (stealth-patched
   **Firefox**) as the engine. Speaks the same gateway protocol and the same wait semantics as the
   other workers (spec-enforced), pairs by worker key, and registers as `platform: "server"`.
   Independent of `meerkly-headless` — not a port of it.
 ```
 
-Add `meerkly-worker/CLAUDE.md` to the "deeper docs" list as well.
+Add `meerkly-headless/CLAUDE.md` to the "deeper docs" list as well.
 
 - [ ] **Step 15: Final verification and commit**
 

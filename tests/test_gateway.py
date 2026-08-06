@@ -3,7 +3,7 @@ import json
 import pytest
 from jsonschema import Draft202012Validator
 
-from meerkly_worker import gateway as gw
+from meerkly_headless import gateway as gw
 
 MACHINE = "3f2b7c1e-0000-4000-8000-000000000001"
 

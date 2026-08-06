@@ -1,4 +1,4 @@
-# meerkly-worker
+# meerkly-headless
 
 A Meerkly worker for headless servers. It opens a persistent WebSocket to the
 Meerkly gateway, registers itself, and serves crawl jobs using
@@ -11,7 +11,7 @@ and same wait semantics (both enforced by conformance tests against
 
 > **Status: under construction.** URL validation, configuration, and logging are
 > implemented and tested. The engine, gateway client, and CLI entry point are
-> not written yet, so the container builds but `meerkly-worker run` will not
+> not written yet, so the container builds but `meerkly-headless run` will not
 > start until those land. See `docs/superpowers/plans/`.
 
 ## Quick start with Docker
@@ -56,7 +56,7 @@ Requires Python 3.11+.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m invisible_playwright fetch
-MEERKLY_API_KEY=mk_wk_your_key_here .venv/bin/meerkly-worker run
+MEERKLY_API_KEY=mk_wk_your_key_here .venv/bin/meerkly-headless run
 ```
 
 Run the tests with:
@@ -81,7 +81,7 @@ unset.
 | `MEERKLY_WORKER_ID` | hostname | Replica name; also salts the derived machine ID. |
 | `MEERKLY_WORKER_NAME` | worker ID | Display name in the device list. |
 | `MEERKLY_MACHINE_ID` | — | Pins the machine ID. Must be a UUID. |
-| `MEERKLY_HOME` | `~/.meerkly-worker` | Data directory (`/data` in the image). |
+| `MEERKLY_HOME` | `~/.meerkly-headless` | Data directory (`/data` in the image). |
 | `GATEWAY_URL` | `wss://gateway.meerkly.com/v1/connect` | |
 | `ACCOUNT_BASE_URL` | `https://account.meerkly.com` | |
 | `APP_ENV` | `production` | `development` points both URLs at localhost. |

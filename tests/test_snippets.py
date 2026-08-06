@@ -1,4 +1,4 @@
-from meerkly_worker import snippets
+from meerkly_headless import snippets
 
 
 def test_settle_observer_excludes_attributes():

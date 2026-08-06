@@ -1,6 +1,6 @@
 import pytest
 
-from meerkly_worker.config import load_config
+from meerkly_headless.config import load_config
 
 ALL_VARS = [
     "GATEWAY_URL",

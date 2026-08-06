@@ -1,7 +1,7 @@
 import pytest
 
-from meerkly_worker import urls as urls_module
-from meerkly_worker.urls import (
+from meerkly_headless import urls as urls_module
+from meerkly_headless.urls import (
     _normalize_host,
     as_ipv4,
     check_url,

@@ -1,4 +1,4 @@
-"""Entry point: `meerkly-worker run`."""
+"""Entry point: `meerkly-headless run`."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _running_in_container() -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="meerkly-worker", description="Meerkly server worker")
+    parser = argparse.ArgumentParser(prog="meerkly-headless", description="Meerkly server worker")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("command", nargs="?", choices=["run"], help="command to run")
 
@@ -56,7 +56,7 @@ async def run() -> int:
         print(str(err), file=sys.stderr)
         return 1
 
-    logger.info("Starting meerkly-worker", machineId=machine_id, version=__version__)
+    logger.info("Starting meerkly-headless", machineId=machine_id, version=__version__)
 
     store = DeviceTokenStore(cfg.home, machine_id, logger)
     token = await obtain_device_token(cfg, machine_id, store, logger)
