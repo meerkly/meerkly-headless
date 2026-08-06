@@ -148,6 +148,7 @@ def _config(tmp_path):
         locale=None,
         timezone=None,
         allow_insecure=False,
+        profile_reset_jobs=50,
     )
 
 
@@ -766,3 +767,87 @@ def test_empty_document_detection():
     assert not is_empty_document('{"ip":"1.2.3.4"}')
     # A failed extraction is None, handled by the separate not-a-string branch.
     assert not is_empty_document(None)
+
+
+# --- profile hygiene --------------------------------------------------------
+
+
+def test_clear_profile_state_drops_identity_but_keeps_the_cache(tmp_path, log):
+    """The cache carries no cross-site identity and is what makes a repeat
+    crawl answer 304 with current content, which earns credits."""
+    from meerkly_worker.browser import clear_profile_state
+
+    profile = tmp_path / "profile"
+    (profile / "storage" / "default").mkdir(parents=True)
+    (profile / "storage" / "default" / "idb.bin").write_text("tracker state")
+    (profile / "cache2" / "entries").mkdir(parents=True)
+    (profile / "cache2" / "entries" / "abc").write_text("cached page")
+    for name in ("cookies.sqlite", "cookies.sqlite-wal", "webappsstore.sqlite"):
+        (profile / name).write_text("x")
+    (profile / "prefs.js").write_text("user_pref(...)")
+
+    clear_profile_state(profile, log)
+
+    assert not (profile / "cookies.sqlite").exists()
+    assert not (profile / "cookies.sqlite-wal").exists()
+    assert not (profile / "webappsstore.sqlite").exists()
+    assert not (profile / "storage").exists(), "site storage must go"
+    # Kept:
+    assert (profile / "cache2" / "entries" / "abc").exists(), "cache must survive"
+    assert (profile / "prefs.js").exists(), "engine prefs must survive"
+
+
+def test_clear_profile_state_tolerates_a_bare_profile(tmp_path, log):
+    from meerkly_worker.browser import clear_profile_state
+
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    clear_profile_state(profile, log)  # must not raise
+
+
+async def test_profile_resets_after_the_configured_number_of_jobs(tmp_path, log, monkeypatch):
+    from dataclasses import replace
+
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(replace(_config(tmp_path), profile_reset_jobs=3), MACHINE, log)
+    cleared = []
+    torn_down = []
+
+    monkeypatch.setattr(
+        "meerkly_worker.browser.clear_profile_state", lambda d, lg: cleared.append(d)
+    )
+
+    async def fake_teardown():
+        torn_down.append(True)
+
+    manager._teardown = fake_teardown
+
+    for served in range(3):
+        manager._jobs_since_reset = served
+        await manager._reset_profile_if_due()
+    assert cleared == [], "must not reset before the limit"
+
+    manager._jobs_since_reset = 3
+    await manager._reset_profile_if_due()
+
+    assert len(cleared) == 1, "should reset once the limit is reached"
+    assert torn_down, "the browser must be down before touching profile files"
+    assert manager._jobs_since_reset == 0, "counter should restart"
+
+
+async def test_profile_reset_can_be_disabled(tmp_path, log, monkeypatch):
+    from dataclasses import replace
+
+    from meerkly_worker.browser import BrowserManager
+
+    manager = BrowserManager(replace(_config(tmp_path), profile_reset_jobs=0), MACHINE, log)
+    cleared = []
+    monkeypatch.setattr(
+        "meerkly_worker.browser.clear_profile_state", lambda d, lg: cleared.append(d)
+    )
+
+    manager._jobs_since_reset = 10_000
+    await manager._reset_profile_if_due()
+
+    assert cleared == [], "0 must disable resets entirely"

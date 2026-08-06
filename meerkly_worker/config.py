@@ -19,6 +19,8 @@ DEV_GATEWAY_URL = "ws://localhost:8080/v1/connect"
 PROD_ACCOUNT_BASE_URL = "https://account.meerkly.com"
 DEV_ACCOUNT_BASE_URL = "http://localhost:3000"
 DEFAULT_HEALTH_PORT = 9090
+# Jobs between cookie/storage resets. Cheap: one relaunch costs a few seconds.
+DEFAULT_PROFILE_RESET_JOBS = 50
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,8 @@ class Config:
     locale: str | None
     timezone: str | None
     allow_insecure: bool
+    # Last field with a default so existing constructors keep working.
+    profile_reset_jobs: int = DEFAULT_PROFILE_RESET_JOBS
 
 
 def _env(name: str) -> str | None:
@@ -69,7 +73,27 @@ def load_config() -> Config:
         timezone=_env("MEERKLY_TIMEZONE"),
         # Strictly "true" — a stray "1" must not disable the transport guard.
         allow_insecure=os.environ.get("ALLOW_INSECURE_GATEWAY") == "true",
+        profile_reset_jobs=_profile_reset_jobs(),
     )
+
+
+def _profile_reset_jobs() -> int:
+    """Jobs served before cookies and site storage are dropped. 0 disables.
+
+    A long-lived profile accumulates a reputation: anti-abuse cookies pin a bad
+    score to the session, and third-party trackers link every site the worker
+    has visited into one identity no real user would have. Both survive
+    restarts, so the worker gets steadily more blocked until the volume is
+    wiped by hand.
+    """
+    raw = _env("MEERKLY_PROFILE_RESET_JOBS")
+    if raw is None:
+        return DEFAULT_PROFILE_RESET_JOBS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_PROFILE_RESET_JOBS
+    return value if value >= 0 else DEFAULT_PROFILE_RESET_JOBS
 
 
 def _health_port() -> int:

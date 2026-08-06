@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import shutil
 import time
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -40,6 +41,20 @@ STABLE_POLL_MS = 250
 
 # Firefox's profile lock files (Chromium's are SingletonLock/Socket/Cookie).
 PROFILE_LOCKS = ("lock", ".parentlock", "parent.lock")
+
+# Cookies and per-site storage. Deliberately NOT the HTTP cache (cache2/,
+# startupCache/): the cache is what makes a repeat crawl answer 304 with
+# current content, which earns credits and carries no cross-site identity.
+PROFILE_STATE = (
+    "cookies.sqlite",
+    "cookies.sqlite-wal",
+    "cookies.sqlite-shm",
+    "webappsstore.sqlite",
+    "storage.sqlite",
+    "sessionstore.jsonlz4",
+    "storage",
+    "sessionstore-backups",
+)
 
 
 def fingerprint_seed(machine_id: str) -> int:
@@ -158,6 +173,38 @@ def is_empty_document(html) -> bool:
     return isinstance(html, str) and not html.strip()
 
 
+def clear_profile_state(profile_dir: Path, logger) -> None:
+    """Drop cookies and site storage, keeping the HTTP cache.
+
+    A long-lived profile accumulates two things that get a worker blocked, and
+    both survive restarts. Anti-abuse cookies pin a bad score to the session,
+    so once a site has challenged this profile every later request carries the
+    marker. And third-party tracker cookies link every unrelated site the
+    worker has crawled into a single identity -- a browser holding ad-network
+    cookies for a dozen unrelated domains with no organic browsing between
+    them is a recognisable crawler, and those networks share signals well
+    beyond the sites that set them.
+
+    The cache is kept on purpose: it holds no cross-site identity and is what
+    lets a repeat crawl answer 304 with current content.
+    """
+    dropped = []
+    for name in PROFILE_STATE:
+        target = profile_dir / name
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            dropped.append(name)
+        except FileNotFoundError:
+            continue
+        except OSError as err:
+            logger.warn("Could not clear profile state", file=name, error=str(err))
+    if dropped:
+        logger.info("Cleared profile cookies and site storage", dropped=len(dropped))
+
+
 def clear_profile_locks(profile_dir: Path, logger) -> None:
     """Remove lock files a previous run left behind.
 
@@ -189,6 +236,8 @@ class BrowserManager:
         self._lock = asyncio.Lock()
         # Why the last exec_js fell back, so callers can report a cause.
         self._last_exec_error: str | None = None
+        # Jobs served since the last cookie/storage reset.
+        self._jobs_since_reset = 0
 
     def is_ready(self) -> bool:
         return (
@@ -320,7 +369,27 @@ class BrowserManager:
 
     async def navigate_and_extract(self, job: dict) -> dict:
         async with self._lock:
-            return await self._fetch(job)
+            await self._reset_profile_if_due()
+            try:
+                return await self._fetch(job)
+            finally:
+                self._jobs_since_reset += 1
+
+    async def _reset_profile_if_due(self) -> None:
+        """Periodically drop the profile's accumulated identity.
+
+        Done between jobs rather than mid-crawl, and only when a limit is set
+        (0 disables). The browser must be down to touch these files, so this
+        costs one relaunch -- a few seconds every N jobs.
+        """
+        limit = self._cfg.profile_reset_jobs
+        if limit <= 0 or self._jobs_since_reset < limit:
+            return
+
+        self._logger.info("Resetting profile state", jobsServed=self._jobs_since_reset)
+        await self._teardown()
+        clear_profile_state(self._profile_dir, self._logger)
+        self._jobs_since_reset = 0
 
     async def _fetch(self, job: dict) -> dict:
         started = time.monotonic()
