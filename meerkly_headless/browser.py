@@ -15,6 +15,12 @@ Deliberate engine choices, do not "improve" without re-measuring:
     we no longer run our own entrypoint-started Xvfb.
   * A stable seed from the machine id, so this worker presents one consistent
     fingerprint across restarts.
+  * With PROXY_URL set, invisible_playwright probes the egress IP *through the
+    proxy* at every launch and raises on failure (Firefox's
+    network.proxy.failover_direct is false, so there is no silent direct
+    fallback) — a dead proxy is a launch failure by design, never an IP leak.
+    locale="auto" then derives from the proxy's exit country unless
+    MEERKLY_LOCALE pins it.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from . import snippets
 from .config import Config
 from .fetch_spec import STABLE_QUIET_MS, effective_detect_probe, effective_settle_cap
 from .identity import set_browser_version
+from .proxy import build_proxy_options, generate_sid
 
 NAVIGATION_TIMEOUT_MS = 30000
 MAX_HTML_CHARS = 20_000_000
@@ -238,6 +245,10 @@ class BrowserManager:
         self._last_exec_error: str | None = None
         # Jobs served since the last cookie/storage reset.
         self._jobs_since_reset = 0
+        # Proxy session id: held for the life of one profile generation, so a
+        # fresh cookie jar pairs with a fresh exit IP. Rotated on profile
+        # reset, kept across crash recovery (same profile => same session).
+        self._proxy_sid = generate_sid() if cfg.proxy_url else None
 
     def is_ready(self) -> bool:
         return (
@@ -272,6 +283,11 @@ class BrowserManager:
             options["locale"] = self._cfg.locale
         if self._cfg.timezone:
             options["timezone"] = self._cfg.timezone
+        if self._cfg.proxy_url:
+            proxy = build_proxy_options(self._cfg.proxy_url, self._proxy_sid)
+            options["proxy"] = proxy
+            # server is credential-free; the full URL and userinfo never logged.
+            self._logger.info("Proxy enabled", server=proxy["server"], sid=self._proxy_sid)
 
         stack = AsyncExitStack()
         try:
@@ -390,6 +406,10 @@ class BrowserManager:
         await self._teardown()
         clear_profile_state(self._profile_dir, self._logger)
         self._jobs_since_reset = 0
+        # New profile generation => new exit IP: rotate the proxy session id.
+        if self._cfg.proxy_url:
+            self._proxy_sid = generate_sid()
+            self._logger.info("Rotated proxy session id", sid=self._proxy_sid)
 
     async def _fetch(self, job: dict) -> dict:
         started = time.monotonic()

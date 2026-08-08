@@ -16,6 +16,8 @@ ALL_VARS = [
     "MEERKLY_TIMEZONE",
     "ALLOW_INSECURE_GATEWAY",
     "APP_ENV",
+    "MEERKLY_PROFILE_RESET_JOBS",
+    "PROXY_URL",
 ]
 
 
@@ -52,6 +54,14 @@ def test_api_key_is_trimmed_and_blank_is_none(monkeypatch):
     assert load_config().api_key == "mk_wk_abc"
     monkeypatch.setenv("MEERKLY_API_KEY", "   ")
     assert load_config().api_key is None
+
+
+def test_proxy_url_defaults_to_none_and_is_trimmed(monkeypatch):
+    assert load_config().proxy_url is None
+    monkeypatch.setenv("PROXY_URL", "  http://u:p@h:1337  ")
+    assert load_config().proxy_url == "http://u:p@h:1337"
+    monkeypatch.setenv("PROXY_URL", "   ")
+    assert load_config().proxy_url is None
 
 
 def test_worker_name_defaults_to_worker_id(monkeypatch):

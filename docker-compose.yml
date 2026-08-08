@@ -5,17 +5,26 @@ services:
     # a failed pull.
     pull_policy: build
     restart: unless-stopped
+    # Three replicas so the proxy hands each its own session id and thus its
+    # own exit IP. Deliberately NO MEERKLY_WORKER_ID and NO volume: identity
+    # then derives from MEERKLY_API_KEY + each container's unique hostname
+    # (config.py falls back to socket.gethostname()), giving three distinct,
+    # gateway-valid machine ids. A shared volume or a shared worker id would
+    # collide their machine ids and the gateway would orphan the duplicates.
+    # Trade-off: no device token / HTTP cache persists across recreation, and
+    # devices show up under opaque container hostnames rather than worker-1/2/3.
+    deploy:
+      replicas: 3
     environment:
       # Empty default (not :?) so `down`, `logs`, and `ps` work without a key.
       MEERKLY_API_KEY: ${MEERKLY_API_KEY:-}
-      MEERKLY_WORKER_ID: ${MEERKLY_WORKER_ID:-worker-1}
+      # Full proxy URL; a literal <sid> is replaced with a per-worker session id.
+      PROXY_URL: ${PROXY_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       APP_ENV: ${APP_ENV:-}
       GATEWAY_URL: ${GATEWAY_URL:-}
       ACCOUNT_BASE_URL: ${ACCOUNT_BASE_URL:-}
       ALLOW_INSECURE_GATEWAY: ${ALLOW_INSECURE_GATEWAY:-}
-    volumes:
-      - worker-data:/data
     # Needed on Linux so the container can reach a gateway on the host.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -40,6 +49,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  worker-data:

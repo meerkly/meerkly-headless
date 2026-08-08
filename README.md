@@ -5,14 +5,10 @@ Meerkly gateway, registers itself, and serves crawl jobs using
 [invisible_playwright](https://github.com/feder-cr/invisible_playwright) — a
 stealth-patched Firefox.
 
-It is a sibling of `meerkly-headless`, not a port of it: same gateway protocol
-and same wait semantics (both enforced by conformance tests against
-`api-gateway/spec`), different engine and a much smaller surface.
-
-> **Status: under construction.** URL validation, configuration, and logging are
-> implemented and tested. The engine, gateway client, and CLI entry point are
-> not written yet, so the container builds but `meerkly-headless run` will not
-> start until those land. See `docs/superpowers/plans/`.
+It is a sibling of the `meerkly-desktop` and `meerkly-android` workers, not a
+port of them: same gateway protocol and same wait semantics (both enforced by
+conformance tests against `api-gateway/spec`), different engine and a much
+smaller surface.
 
 ## Quick start with Docker
 
@@ -89,6 +85,8 @@ unset.
 | `HEADLESS` | `true` | Any value but the literal `false` means true. See the note below — this is not a headless browser. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `MEERKLY_LOCALE` / `MEERKLY_TIMEZONE` | auto | Pin them instead of deriving from the egress IP. |
+| `MEERKLY_PROFILE_RESET_JOBS` | `50` | Jobs served before cookies and site storage are dropped. `0` disables. |
+| `PROXY_URL` | — | Route all browser traffic through this proxy. A literal `<sid>` becomes a rotating session id — see [Proxy mode](#proxy-mode). |
 | `ALLOW_INSECURE_GATEWAY` | `false` | Permits plaintext to a remote host. Exactly `true` to enable. |
 
 Two image settings are deliberate and should not be "simplified":
@@ -106,18 +104,71 @@ Two image settings are deliberate and should not be "simplified":
   to `pip install --force-reinstall` with a five-minute timeout — in an
   immutable image that means either a mutated `site-packages` or a long stall.
 
+## Proxy mode
+
+Set `PROXY_URL` to a full proxy URL and every crawl exits through it:
+
+```
+PROXY_URL=http://R5TfrmSltHC9-sid-<sid>-ttl-60:password@unlimited.proxiware.com:1337
+```
+
+`http`, `https`, and `socks5` schemes are supported; an explicit port is
+required. The credentials are split out before the URL reaches the engine and
+are **never logged** — only the credential-free server address and the current
+session id appear in the logs.
+
+**Rotating session id.** The literal token `<sid>` (anywhere in the URL — usually
+inside the username, as above) is replaced with a random 6-digit id. It is
+generated once at startup and **rotated on every profile reset**
+(`MEERKLY_PROFILE_RESET_JOBS`), so each fresh cookie jar pairs with a fresh exit
+IP. A crash relaunch reuses the same profile and therefore **keeps** the current
+sid — same cookies, same exit IP.
+
+**Fail-fast, not fail-open.** With a proxy set, the engine probes its egress IP
+through the proxy at launch and Firefox is configured with no direct fallback, so
+an unreachable proxy makes the worker fail to start rather than silently crawl
+from the host IP. A malformed `PROXY_URL` likewise exits at startup.
+
+**Geo.** A proxied worker stays unregioned — the gateway derives region from the
+worker's own connection IP, which no longer matches the proxy's (random) exit
+country. Unregioned workers are still served for requests that don't pin a
+country, and are correctly skipped for country-specific ones.
+
+**Locale.** `MEERKLY_LOCALE`/`MEERKLY_TIMEZONE` default to `auto`, which behind a
+proxy derives from the exit country. Pin them if you need a fixed locale.
+
+### Running a proxied fleet
+
+`docker-compose.yml` runs **three replicas** by default. Each container
+generates its own session id, so the three land on three different exit IPs with
+no extra configuration:
+
+```bash
+PROXY_URL='http://…-sid-<sid>-ttl-60:password@unlimited.proxiware.com:1337' \
+MEERKLY_API_KEY=mk_wk_… docker compose up -d --build
+```
+
+The compose file deliberately runs the replicas **without a data volume and
+without `MEERKLY_WORKER_ID`**: each worker derives a distinct machine ID from the
+API key and its own container hostname. Sharing a volume or a worker ID across
+replicas would collide their machine IDs, and the gateway would orphan the
+duplicates. The trade-off is that identity and the HTTP cache are not persisted
+across container recreation — acceptable for a stateless proxied fleet.
+
 ## Data directory
 
-`$MEERKLY_HOME` (`/data` in the container, on the `worker-data` volume) holds
-the machine ID, the device token, and the browser profile. **The device token is
-a plaintext `0600` file**, not keychain-encrypted — servers have no OS keychain.
-That is the honest tradeoff, not an oversight. Back the volume up or don't, but
-treat it as a secret either way.
+`$MEERKLY_HOME` (`/data` in the container) holds the machine ID, the device
+token, and the browser profile. **The device token is a plaintext `0600` file**,
+not keychain-encrypted — servers have no OS keychain. That is the honest
+tradeoff, not an oversight. Mount a volume at `/data` if you want it persisted,
+and treat it as a secret either way. (The default 3-replica compose runs
+*without* a volume on purpose — see [Running a proxied fleet](#running-a-proxied-fleet).)
 
-Losing the volume is survivable: with an API key set, the machine ID is derived
-from the key and the worker ID, so a recreated container keeps its identity. Note
-the corollary — **rotating the worker key changes derived machine IDs**. If an
-identity must survive rotation, give it a volume or set `MEERKLY_MACHINE_ID`.
+Running without a persisted volume is survivable: with an API key set, the
+machine ID is derived from the key and the worker ID, so a recreated container
+keeps its identity. Note the corollary — **rotating the worker key changes
+derived machine IDs**. If an identity must survive rotation, give it a volume or
+set `MEERKLY_MACHINE_ID`.
 
 ## Troubleshooting
 

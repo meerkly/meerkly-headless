@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import pytest
 from playwright.async_api import Error as PlaywrightError
@@ -149,6 +150,7 @@ def _config(tmp_path):
         timezone=None,
         allow_insecure=False,
         profile_reset_jobs=50,
+        proxy_url=None,
     )
 
 
@@ -283,6 +285,50 @@ async def test_launch_passes_the_stealth_options(tmp_path, log, monkeypatch):
     # No user agent, viewport, or header overrides -- the engine's own patches
     # are the whole fingerprint story.
     assert not {"user_agent", "viewport", "extra_http_headers"} & set(created)
+    # No proxy unless PROXY_URL is set.
+    assert "proxy" not in created
+
+
+async def test_launch_passes_proxy_options(tmp_path, log, monkeypatch):
+    """PROXY_URL becomes a Playwright proxy dict with the sid spliced in."""
+    from dataclasses import replace
+
+    import invisible_playwright.async_api as engine
+
+    from meerkly_headless.browser import BrowserManager
+
+    created = {}
+
+    class _Recording(_FakeInvisiblePlaywright):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            created.update(kwargs)
+
+    monkeypatch.setattr(engine, "InvisiblePlaywright", _Recording)
+
+    cfg = replace(_config(tmp_path), proxy_url="http://u-sid-<sid>-ttl-60:pw@proxy.example:1337")
+    manager = BrowserManager(cfg, MACHINE, log)
+    await manager._launch()
+
+    assert created["proxy"]["server"] == "http://proxy.example:1337"
+    assert created["proxy"]["password"] == "pw"
+    assert manager._proxy_sid in created["proxy"]["username"]
+    assert manager._proxy_sid is not None
+
+
+async def test_malformed_proxy_url_fails_the_launch(tmp_path, log, monkeypatch):
+    """A bad PROXY_URL must raise, not silently crawl from the host IP."""
+    from dataclasses import replace
+
+    import invisible_playwright.async_api as engine
+
+    from meerkly_headless.browser import BrowserManager
+
+    monkeypatch.setattr(engine, "InvisiblePlaywright", _FakeInvisiblePlaywright)
+
+    cfg = replace(_config(tmp_path), proxy_url="proxy.example")  # no scheme/port
+    with pytest.raises(ValueError):
+        await BrowserManager(cfg, MACHINE, log)._launch()
 
 
 async def test_extra_pages_are_still_closed(tmp_path, log):
@@ -851,3 +897,44 @@ async def test_profile_reset_can_be_disabled(tmp_path, log, monkeypatch):
     await manager._reset_profile_if_due()
 
     assert cleared == [], "0 must disable resets entirely"
+
+
+async def test_profile_reset_rotates_the_proxy_sid(tmp_path, log, monkeypatch):
+    from dataclasses import replace
+
+    from meerkly_headless.browser import BrowserManager
+
+    cfg = replace(_config(tmp_path), profile_reset_jobs=3, proxy_url="http://u-<sid>:p@h:1337")
+    manager = BrowserManager(cfg, MACHINE, log)
+    monkeypatch.setattr("meerkly_headless.browser.clear_profile_state", lambda d, lg: None)
+
+    async def fake_teardown():
+        return None
+
+    manager._teardown = fake_teardown
+
+    before = manager._proxy_sid
+    manager._jobs_since_reset = 3
+    await manager._reset_profile_if_due()
+
+    assert manager._proxy_sid != before, "a new profile generation needs a new exit IP"
+    assert re.fullmatch(r"\d{6}", manager._proxy_sid)
+
+
+async def test_crash_recovery_keeps_the_proxy_sid(tmp_path, log, monkeypatch):
+    from dataclasses import replace
+
+    import invisible_playwright.async_api as engine
+
+    from meerkly_headless.browser import BrowserManager
+
+    monkeypatch.setattr(engine, "InvisiblePlaywright", _FakeInvisiblePlaywright)
+    monkeypatch.setattr("meerkly_headless.browser.CRASH_RELAUNCH_DELAY_SEC", 0)
+
+    cfg = replace(_config(tmp_path), proxy_url="http://u-<sid>:p@h:1337")
+    manager = BrowserManager(cfg, MACHINE, log)
+    before = manager._proxy_sid
+
+    await manager._recover()
+
+    assert manager._proxy_sid == before, "same profile after a crash => same exit IP"

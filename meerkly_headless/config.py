@@ -38,8 +38,11 @@ class Config:
     locale: str | None
     timezone: str | None
     allow_insecure: bool
-    # Last field with a default so existing constructors keep working.
+    # Fields with defaults go last so existing constructors keep working.
     profile_reset_jobs: int = DEFAULT_PROFILE_RESET_JOBS
+    # Full proxy URL (http/https/socks5). A literal "<sid>" is replaced at
+    # launch with a random session id. Parsed lazily in browser.py, not here.
+    proxy_url: str | None = None
 
 
 def _env(name: str) -> str | None:
@@ -74,6 +77,7 @@ def load_config() -> Config:
         # Strictly "true" — a stray "1" must not disable the transport guard.
         allow_insecure=os.environ.get("ALLOW_INSECURE_GATEWAY") == "true",
         profile_reset_jobs=_profile_reset_jobs(),
+        proxy_url=_env("PROXY_URL"),
     )
 
 
