@@ -1,29 +1,28 @@
 name: Deploy
 
+# Every push to main publishes the worker image to ghcr, gated on the full CI
+# suite so a broken commit never ships.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  push:
     branches: [main]
 
-# Serialize builds so two CI runs finishing close together push the :latest tag
-# in trigger order rather than racing.
 concurrency:
-  group: deploy
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  docker-build:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  # Reuse the CI workflow as the gate — lint, tests, shellcheck — no duplication.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -35,23 +34,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tag with the TRIGGERING CI run's commit (the code checked out above),
-      # not GITHUB_SHA -- for workflow_run events those diverge when two pushes
-      # land quickly, and the installer/consumers would chase a tag that was
-      # never pushed.
-      - name: Compute image tag
-        id: tag
-        run: echo "short=${HEAD_SHA::7}" >> "$GITHUB_OUTPUT"
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # Short commit sha (traceable) + latest (what install.sh pulls).
           tags: |
-            type=raw,value=${{ steps.tag.outputs.short }}
+            type=sha,format=short
             type=raw,value=latest
 
       - name: Build and push
@@ -64,7 +54,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-# No kubectl rollout job here (unlike api-gateway): the headless worker is not a
-# cluster workload. This publishes ghcr.io/meerkly/meerkly-headless:latest, which
-# `install.sh` pulls onto each operator's own machine. NOTE: the ghcr package
-# must be set to public visibility once, or anonymous `docker pull` fails.
+# NOTE (one-time, manual): GitHub creates the ghcr package **private** on first
+# push, so anonymous `docker pull` (what install.sh does) stays unauthorized
+# until you flip it: GitHub → Packages → meerkly-headless → Package settings →
+# Change visibility → Public. GITHUB_TOKEN cannot change package visibility, so
+# this can't be automated here.

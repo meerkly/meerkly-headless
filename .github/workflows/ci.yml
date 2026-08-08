@@ -2,8 +2,9 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [ main ]
+  # Callable by the Deploy workflow, which gates publishing on these checks so a
+  # push to main is tested and published in one pipeline (no duplicate run).
+  workflow_call:
 
 jobs:
   lint:
