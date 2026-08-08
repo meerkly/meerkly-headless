@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "meerkly-com",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "../meerkly-com", "run", "start"],
+      "port": 8000
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+# name: Sync install.sh to meerkly-com
+
+# # install.sh is the canonical worker installer; meerkly-com serves a vendored
+# # copy. When it changes on main, tell meerkly-com to re-sync and open a PR.
+# on:
+#   push:
+#     branches: [main]
+#     paths: [install.sh]
+#   workflow_dispatch:
+
+# jobs:
+#   dispatch:
+#     runs-on: ubuntu-latest
+#     steps:
+#       # Fires a repository_dispatch in meerkly/meerkly-com. Needs a token with
+#       # write access to that repo (GITHUB_TOKEN is scoped to this repo only) --
+#       # provide SYNC_DISPATCH_TOKEN, a fine-grained PAT with Contents: read &
+#       # write on meerkly/meerkly-com.
+#       - name: Notify meerkly-com
+#         uses: peter-evans/repository-dispatch@v3
+#         with:
+#           token: ${{ secrets.SYNC_DISPATCH_TOKEN }}
+#           repository: meerkly/meerkly-com
+#           event-type: sync-install

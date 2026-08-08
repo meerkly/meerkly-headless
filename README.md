@@ -10,7 +10,43 @@ port of them: same gateway protocol and same wait semantics (both enforced by
 conformance tests against `api-gateway/spec`), different engine and a much
 smaller surface.
 
-## Quick start with Docker
+## Quick install
+
+On any machine with Docker, one line installs and starts the worker:
+
+```bash
+curl -fsSL https://meerkly.com | MEERKLY_API_KEY=mk_wk_your_key_here sh
+```
+
+Get a worker key from your dashboard at `https://account.meerkly.com/devices`.
+Without the env var the installer prompts for the key. It pulls
+`ghcr.io/meerkly/meerkly-headless`, writes a small managed project to
+`~/.meerkly` (a compose file plus a `0600` `.env` holding your key), and starts
+the container. The worker is Docker-based because it drives a real Firefox under
+Xvfb — there is no single-binary build.
+
+| Variable / flag | Purpose |
+|---|---|
+| `MEERKLY_API_KEY` / `--key` | Worker key (`mk_wk_…`). Prompted if omitted. |
+| `MEERKLY_DIR` / `--dir` | Install directory (default `~/.meerkly`). |
+| `PROXY_URL` | Route crawls through a proxy — see [Proxy mode](#proxy-mode). |
+| `--no-pull` | Use the local image; skip the registry pull (testing). |
+
+```bash
+# Upgrade: re-run the one-liner (it pulls the latest image and recreates).
+curl -fsSL https://meerkly.com | sh          # reuses the stored key
+
+# Status / logs / stop / uninstall
+docker compose --project-directory ~/.meerkly logs -f
+docker compose --project-directory ~/.meerkly down
+docker compose --project-directory ~/.meerkly down -v && rm -rf ~/.meerkly
+```
+
+The key persists in `~/.meerkly/.env` and identity persists in a named volume,
+so restarts and upgrades need no re-entry. This runs a **single** worker; to run
+the multi-replica proxy fleet, use the development compose below.
+
+## Development compose (multi-replica fleet)
 
 Create a `.env` next to `docker-compose.yml` with a worker key from your Meerkly
 dashboard (`/devices`):
@@ -45,7 +81,7 @@ docker compose down
 `stop_grace_period` is 45s because an in-flight crawl has a 30s budget — Docker's
 default 10s would cut a job off mid-request.
 
-## Running from source
+## Running from Python source
 
 Requires Python 3.11+.
 
