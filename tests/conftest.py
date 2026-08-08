@@ -7,18 +7,31 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _resolve_spec_dir() -> Path:
+    """Locate the api-gateway protocol spec.
+
+    Order: explicit SPEC_DIR, then the sibling api-gateway checkout (canonical —
+    used in local dev so spec drift fails immediately), then the vendored copy
+    committed under spec/ (used in CI, where the private sibling isn't
+    available). Keep the vendored copy fresh with scripts/sync-spec.sh.
+    """
+    override = os.environ.get("SPEC_DIR")
+    if override:
+        return Path(override).resolve()
+    sibling = (REPO_ROOT.parent / "api-gateway" / "spec").resolve()
+    if sibling.is_dir():
+        return sibling
+    return (REPO_ROOT / "spec").resolve()
+
+
 @pytest.fixture(scope="session")
 def spec_dir() -> Path:
-    override = os.environ.get("SPEC_DIR")
-    directory = (
-        Path(override).resolve()
-        if override
-        else (REPO_ROOT.parent / "api-gateway" / "spec").resolve()
-    )
+    directory = _resolve_spec_dir()
     if not directory.is_dir():
         raise RuntimeError(
             f"Protocol spec not found at {directory}. Check out api-gateway beside this "
-            f"repo or set SPEC_DIR. Conformance must never silently skip."
+            f"repo, set SPEC_DIR, or run scripts/sync-spec.sh. Conformance must never "
+            f"silently skip."
         )
     return directory
 

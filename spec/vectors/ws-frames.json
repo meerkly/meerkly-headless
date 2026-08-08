@@ -1,0 +1,267 @@
+{
+  "description": "Conformance vectors for spec/ws-frames.schema.json \u2014 the worker<->gateway WebSocket frames. Each case is validated against the named $defs subschema and must match `valid`. Added after a real drift: both workers emit null finalUrl/title/html/loadedMs on failure paths (and the Go gateway accepts it, since those struct fields are non-pointer), but the schema declared them as plain string/integer, so nothing caught the mismatch. Mirrors: meerkly-desktop src/shared/wsFrames.test.ts, meerkly-android FetchFrameConformanceTest.",
+  "cases": [
+    {
+      "name": "register: full frame from a paired worker",
+      "def": "register",
+      "valid": true,
+      "frame": {
+        "type": "register",
+        "machineId": "3f2b7c1e-0000-4000-8000-000000000001",
+        "platform": "desktop",
+        "capabilities": [
+          "fetch"
+        ],
+        "region": "",
+        "deviceToken": "dt_example",
+        "device": {
+          "deviceModel": "host.local",
+          "os": "darwin 25.2.0",
+          "arch": "arm64",
+          "appVersion": "1.0.0",
+          "engineVersion": "Electron 40.4.1 / Chromium 144.0.7559.173",
+          "cpuCores": 12,
+          "memoryMb": 16384,
+          "screen": "1800x1169",
+          "timezone": "Europe/Madrid",
+          "locale": "en-US"
+        }
+      }
+    },
+    {
+      "name": "register: unpaired worker omits deviceToken (gateway replies device_auth_failed)",
+      "def": "register",
+      "valid": true,
+      "frame": {
+        "type": "register",
+        "machineId": "3f2b7c1e-0000-4000-8000-000000000002",
+        "platform": "android",
+        "capabilities": [
+          "fetch"
+        ],
+        "region": "",
+        "device": {
+          "deviceModel": "Pixel 8",
+          "os": "Android 15",
+          "arch": "arm64-v8a",
+          "appVersion": "1.0.0",
+          "engineVersion": "GeckoView 152.0",
+          "cpuCores": 8,
+          "memoryMb": 8192,
+          "screen": "1080x2400",
+          "timezone": "Europe/Madrid",
+          "locale": "en-US"
+        }
+      }
+    },
+    {
+      "name": "register: headless server worker",
+      "def": "register",
+      "valid": true,
+      "frame": {
+        "type": "register",
+        "machineId": "3f2b7c1e-0000-4000-8000-000000000004",
+        "platform": "server",
+        "capabilities": [
+          "fetch"
+        ],
+        "region": "",
+        "deviceToken": "dt_example",
+        "device": {
+          "deviceModel": "worker-01",
+          "os": "linux 6.8.0-45-generic",
+          "arch": "x64",
+          "appVersion": "1.0.0",
+          "engineVersion": "Patchright 1.55.1 / Chromium 140.0.7339.16",
+          "cpuCores": 4,
+          "memoryMb": 8192,
+          "screen": "",
+          "timezone": "Etc/UTC",
+          "locale": "en-US"
+        }
+      }
+    },
+    {
+      "name": "register: unknown platform is rejected",
+      "def": "register",
+      "valid": false,
+      "frame": {
+        "type": "register",
+        "machineId": "3f2b7c1e-0000-4000-8000-000000000005",
+        "platform": "toaster"
+      }
+    },
+    {
+      "name": "register: unknown device field is rejected (additionalProperties false)",
+      "def": "register",
+      "valid": false,
+      "frame": {
+        "type": "register",
+        "machineId": "3f2b7c1e-0000-4000-8000-000000000003",
+        "platform": "desktop",
+        "device": {
+          "deviceModel": "host.local",
+          "somethingNew": "nope"
+        }
+      }
+    },
+    {
+      "name": "result: successful crawl",
+      "def": "result",
+      "valid": true,
+      "frame": {
+        "type": "result",
+        "jobId": "job-1",
+        "success": true,
+        "finalUrl": "https://example.com/",
+        "title": "Example Domain",
+        "response": "<html><body>hi</body></html>",
+        "format": "html",
+        "error": null,
+        "loadedMs": 1234,
+        "waitTimedOut": false,
+        "matchedRule": -1,
+        "httpStatus": 200
+      }
+    },
+    {
+      "name": "result: failure path sends nulls for everything unknown",
+      "def": "result",
+      "valid": true,
+      "frame": {
+        "type": "result",
+        "jobId": "job-2",
+        "success": false,
+        "finalUrl": null,
+        "title": null,
+        "response": null,
+        "format": "html",
+        "error": "Private, loopback, and link-local addresses are not allowed",
+        "loadedMs": null,
+        "waitTimedOut": false,
+        "matchedRule": -1,
+        "httpStatus": 0
+      }
+    },
+    {
+      "name": "result: wait timed out still returns best-effort html and the matched rule",
+      "def": "result",
+      "valid": true,
+      "frame": {
+        "type": "result",
+        "jobId": "job-3",
+        "success": true,
+        "finalUrl": "https://example.com/slow",
+        "title": "Slow",
+        "response": "<html></html>",
+        "format": "html",
+        "error": null,
+        "loadedMs": 30000,
+        "waitTimedOut": true,
+        "matchedRule": 0,
+        "httpStatus": 200
+      }
+    },
+    {
+      "name": "result: matchedRule below -1 is rejected",
+      "def": "result",
+      "valid": false,
+      "frame": {
+        "type": "result",
+        "jobId": "job-4",
+        "success": true,
+        "matchedRule": -2
+      }
+    },
+    {
+      "name": "result: missing success is rejected",
+      "def": "result",
+      "valid": false,
+      "frame": {
+        "type": "result",
+        "jobId": "job-5"
+      }
+    },
+    {
+      "name": "error: terminal auth failure",
+      "def": "error",
+      "valid": true,
+      "frame": {
+        "type": "error",
+        "code": "device_auth_failed",
+        "message": "device not registered"
+      }
+    },
+    {
+      "name": "error: retryable verification outage",
+      "def": "error",
+      "valid": true,
+      "frame": {
+        "type": "error",
+        "code": "verification_unavailable"
+      }
+    },
+    {
+      "name": "error: unknown code is rejected",
+      "def": "error",
+      "valid": false,
+      "frame": {
+        "type": "error",
+        "code": "something_else"
+      }
+    },
+    {
+      "name": "registered: gateway ack",
+      "def": "registered",
+      "valid": true,
+      "frame": {
+        "type": "registered",
+        "connectionId": "conn-1",
+        "heartbeatSec": 30
+      }
+    },
+    {
+      "name": "result: json format returns the raw body",
+      "def": "result",
+      "valid": true,
+      "frame": {
+        "type": "result",
+        "jobId": "j-json",
+        "success": true,
+        "finalUrl": "https://api.example.com/v1/ip",
+        "title": null,
+        "response": "{\"ip\":\"1.2.3.4\"}",
+        "format": "json",
+        "error": null,
+        "loadedMs": 210,
+        "waitTimedOut": false,
+        "matchedRule": -1,
+        "httpStatus": 200
+      }
+    },
+    {
+      "name": "result: legacy worker still sending html is accepted",
+      "def": "result",
+      "valid": true,
+      "frame": {
+        "type": "result",
+        "jobId": "j-legacy",
+        "success": true,
+        "html": "<html></html>",
+        "httpStatus": 200
+      }
+    },
+    {
+      "name": "result: unknown format value is rejected",
+      "def": "result",
+      "valid": false,
+      "frame": {
+        "type": "result",
+        "jobId": "j-bad",
+        "success": true,
+        "response": "{}",
+        "format": "xml"
+      }
+    }
+  ]
+}

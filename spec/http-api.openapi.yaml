@@ -1,0 +1,97 @@
+openapi: 3.1.0
+info:
+  title: Meerkly API Gateway
+  version: "1.0"
+  description: |
+    HTTP surface of the gateway. Currently unauthenticated and therefore
+    IN-CLUSTER / INTERNAL ONLY — the public ingress exposes only the worker
+    WebSocket (/v1/connect, see ws-frames.schema.json). The wait/capture
+    parameter semantics are defined once in fetch-job.schema.json.
+paths:
+  /v1/html:
+    post:
+      summary: Crawl a URL via a connected worker and return the page HTML + metadata.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  description: Target URL. Scheme optional (https:// is prepended); only http/https allowed.
+                wait_for:
+                  $ref: "fetch-job.schema.json#/$defs/waitFor"
+                settle_ms:
+                  $ref: "fetch-job.schema.json#/$defs/settleMs"
+                wait_rules:
+                  $ref: "fetch-job.schema.json#/$defs/waitRules"
+                detect_ms:
+                  $ref: "fetch-job.schema.json#/$defs/detectMs"
+                geo:
+                  type: string
+                  description: >-
+                    Restrict the claim to workers in this region — an ISO
+                    3166-1 alpha-2 country code (e.g. "se"), as derived
+                    server-side from each worker's gateway-observed IP.
+                    Normalized (trim, lowercase); must match [a-z0-9-]{0,32} or
+                    the request is rejected with 400. Empty/absent = any worker;
+                    no idle worker in the region = 541.
+              required: [url]
+      responses:
+        "200":
+          description: Crawl served.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  machine_id: { type: string }
+                  final_url: { type: string }
+                  title: { type: string }
+                  html: { type: string }
+                  loaded_ms: { type: integer }
+                  wait_timed_out:
+                    type: boolean
+                    description: Wait condition not met within budget; html is best-effort (NOT an error).
+                  wait_rule:
+                    type: [string, "null"]
+                    description: The matched rule's `if` selector, "none" when rules were sent but none matched, null when no rules were sent.
+                  http_status:
+                    type: integer
+                    description: Main-document HTTP status of the crawled page (0 if not captured). Independent of this endpoint's own status; drives credits (2xx/404 earn).
+                required: [success, machine_id, final_url, title, html, loaded_ms, wait_timed_out, wait_rule, http_status]
+        "400":
+          description: Bad URL, or invalid wait_for / wait_rules selector.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "502":
+          description: Worker ran but the crawl failed.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "504":
+          description: Worker timed out / dropped / owner pod unreachable.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "541":
+          description: Out of Workers — no idle fetch-capable worker (strictly this; a claimed worker that then fails is 502/504).
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  /v1/devices:
+    get:
+      summary: List connected devices + status (cross-pod, from Redis presence).
+      responses:
+        "200":
+          description: Array of device records (owning userId is never exposed).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        code: { type: integer }
+        error: { type: string }
+      required: [code, error]

@@ -97,10 +97,19 @@ Run the tests with:
 .venv/bin/python -m pytest
 ```
 
-The suite includes conformance checks against `../api-gateway/spec`, so that
-sibling repo must be checked out beside this one (or `SPEC_DIR` set). Those
-tests fail loudly rather than skipping if it is missing — a conformance suite
-that quietly disappears is worse than none.
+The suite includes conformance checks against the api-gateway protocol spec.
+Tests resolve it in this order: `SPEC_DIR`, then the sibling `../api-gateway/spec`
+checkout (canonical — used in local dev so spec drift fails immediately), then a
+**vendored copy under `spec/`** (used in CI, where the private sibling isn't
+available). Refresh the vendored copy when the spec changes:
+
+```bash
+scripts/sync-spec.sh          # copy from ../api-gateway/spec
+scripts/sync-spec.sh --check  # fail if the vendored copy is stale
+```
+
+The tests fail loudly rather than skipping if no spec is found — a conformance
+suite that quietly disappears is worse than none.
 
 ## Configuration
 

@@ -1,0 +1,177 @@
+{
+  "description": "Conformance vectors for parsing the gateway->worker `fetch` frame. Every worker's frame parser MUST produce `parsed` from `frame`, and every worker's wait implementation MUST use the `effective` values (settleCapMs = min(settleMs>0?settleMs:5000, 25000); detectProbeMs = min(detectMs>0?detectMs:200, 25000)). Consumed by: api-gateway internal/model conformance test (marshal round-trip), meerkly-desktop src/main/gateway/fetchFrame.test.ts, meerkly-android FetchFrameTest.kt.",
+  "cases": [
+    {
+      "name": "all params explicit",
+      "frame": {
+        "type": "fetch",
+        "jobId": "j1",
+        "url": "https://example.com",
+        "waitFor": "networkidle",
+        "settleMs": 12000,
+        "waitRules": [
+          {
+            "if": "[data-role=\"header\"]",
+            "then": "[aria-controls=\"main-panel\"]"
+          }
+        ],
+        "detectMs": 800
+      },
+      "parsed": {
+        "jobId": "j1",
+        "url": "https://example.com",
+        "waitFor": "networkidle",
+        "settleMs": 12000,
+        "waitRules": [
+          {
+            "if": "[data-role=\"header\"]",
+            "then": "[aria-controls=\"main-panel\"]"
+          }
+        ],
+        "detectMs": 800
+      },
+      "effective": {
+        "settleCapMs": 12000,
+        "detectProbeMs": 800
+      }
+    },
+    {
+      "name": "minimal frame defaults",
+      "frame": {
+        "type": "fetch",
+        "jobId": "j2",
+        "url": "https://example.com"
+      },
+      "parsed": {
+        "jobId": "j2",
+        "url": "https://example.com",
+        "waitFor": "stable",
+        "settleMs": 0,
+        "waitRules": [],
+        "detectMs": 0
+      },
+      "effective": {
+        "settleCapMs": 5000,
+        "detectProbeMs": 800
+      }
+    },
+    {
+      "name": "empty waitFor resolves to stable",
+      "frame": {
+        "type": "fetch",
+        "jobId": "j3",
+        "url": "https://example.com",
+        "waitFor": "",
+        "settleMs": 0,
+        "waitRules": [],
+        "detectMs": 0
+      },
+      "parsed": {
+        "jobId": "j3",
+        "url": "https://example.com",
+        "waitFor": "stable",
+        "settleMs": 0,
+        "waitRules": [],
+        "detectMs": 0
+      },
+      "effective": {
+        "settleCapMs": 5000,
+        "detectProbeMs": 800
+      }
+    },
+    {
+      "name": "css selector waitFor passes through",
+      "frame": {
+        "type": "fetch",
+        "jobId": "j4",
+        "url": "https://example.com",
+        "waitFor": "h1.property-title",
+        "settleMs": 3000
+      },
+      "parsed": {
+        "jobId": "j4",
+        "url": "https://example.com",
+        "waitFor": "h1.property-title",
+        "settleMs": 3000,
+        "waitRules": [],
+        "detectMs": 0
+      },
+      "effective": {
+        "settleCapMs": 3000,
+        "detectProbeMs": 800
+      }
+    },
+    {
+      "name": "settle and detect capped at 25000",
+      "frame": {
+        "type": "fetch",
+        "jobId": "j5",
+        "url": "https://example.com",
+        "waitFor": "stable",
+        "settleMs": 25000,
+        "detectMs": 25000
+      },
+      "parsed": {
+        "jobId": "j5",
+        "url": "https://example.com",
+        "waitFor": "stable",
+        "settleMs": 25000,
+        "waitRules": [],
+        "detectMs": 25000
+      },
+      "effective": {
+        "settleCapMs": 25000,
+        "detectProbeMs": 25000
+      }
+    },
+    {
+      "name": "multiple rules preserve order",
+      "frame": {
+        "type": "fetch",
+        "jobId": "j6",
+        "url": "https://example.com",
+        "waitFor": "domcontentloaded",
+        "waitRules": [
+          {
+            "if": "h1.property-title",
+            "then": "#propertyData"
+          },
+          {
+            "if": "h1.car-title",
+            "then": "#carData"
+          },
+          {
+            "if": ".spinner",
+            "then": "stable"
+          }
+        ],
+        "detectMs": 200
+      },
+      "parsed": {
+        "jobId": "j6",
+        "url": "https://example.com",
+        "waitFor": "domcontentloaded",
+        "settleMs": 0,
+        "waitRules": [
+          {
+            "if": "h1.property-title",
+            "then": "#propertyData"
+          },
+          {
+            "if": "h1.car-title",
+            "then": "#carData"
+          },
+          {
+            "if": ".spinner",
+            "then": "stable"
+          }
+        ],
+        "detectMs": 200
+      },
+      "effective": {
+        "settleCapMs": 5000,
+        "detectProbeMs": 200
+      }
+    }
+  ]
+}

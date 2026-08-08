@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meerkly.com/spec/ws-frames.schema.json",
+  "title": "Meerkly worker WebSocket protocol frames",
+  "description": "Canonical shape of every frame on the worker<->gateway WebSocket (/v1/connect). Go source: api-gateway/internal/model/device.go. Mirrors: meerkly-desktop src/main/gateway/gatewayClient.ts + fetchFrame.ts, meerkly-android gateway/GatewayClient.kt + FetchFrame.kt, meerkly-headless src/gatewayClient.ts + fetchSpec.ts. Changing a field here means changing all of them \u2014 the conformance vectors fail otherwise.",
+  "$defs": {
+    "register": {
+      "type": "object",
+      "description": "Worker -> gateway, first frame after connect.",
+      "properties": {
+        "type": {
+          "const": "register"
+        },
+        "machineId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "enum": [
+            "desktop",
+            "android",
+            "server"
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "['fetch'] for crawl-capable workers."
+        },
+        "region": {
+          "type": "string",
+          "description": "Ignored by the gateway: the worker's region is derived server-side from its gateway-observed IP (GeoIP, lowercased ISO 3166-1 alpha-2 country code) so workers cannot pick their own region. Kept in the schema for wire compat; workers send \"\"."
+        },
+        "deviceToken": {
+          "type": "string",
+          "description": "Issued at device registration (account app). Mandatory: missing/invalid -> error frame device_auth_failed."
+        },
+        "device": {
+          "type": "object",
+          "properties": {
+            "deviceModel": {
+              "type": "string"
+            },
+            "os": {
+              "type": "string"
+            },
+            "arch": {
+              "type": "string"
+            },
+            "appVersion": {
+              "type": "string"
+            },
+            "engineVersion": {
+              "type": "string"
+            },
+            "cpuCores": {
+              "type": "integer"
+            },
+            "memoryMb": {
+              "type": "integer"
+            },
+            "screen": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "locale": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "machineId",
+        "platform"
+      ]
+    },
+    "registered": {
+      "type": "object",
+      "description": "Gateway -> worker ack.",
+      "properties": {
+        "type": {
+          "const": "registered"
+        },
+        "connectionId": {
+          "type": "string"
+        },
+        "heartbeatSec": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "connectionId",
+        "heartbeatSec"
+      ]
+    },
+    "fetch": {
+      "type": "object",
+      "description": "Gateway -> worker crawl job. waitFor arrives already resolved (never empty on the wire from a live gateway), but workers MUST still default empty -> 'stable'.",
+      "properties": {
+        "type": {
+          "const": "fetch"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "waitFor": {
+          "$ref": "fetch-job.schema.json#/$defs/waitFor"
+        },
+        "settleMs": {
+          "$ref": "fetch-job.schema.json#/$defs/settleMs"
+        },
+        "waitRules": {
+          "$ref": "fetch-job.schema.json#/$defs/waitRules"
+        },
+        "detectMs": {
+          "$ref": "fetch-job.schema.json#/$defs/detectMs"
+        }
+      },
+      "required": [
+        "type",
+        "jobId",
+        "url"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "description": "Worker -> gateway job outcome.",
+      "properties": {
+        "type": {
+          "const": "result"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "finalUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "null when navigation never committed (e.g. rejected URL). Go unmarshals null into the zero value."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "null when no page was loaded."
+        },
+        "response": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The captured document. Page HTML, or the raw body when `format` is `json`."
+        },
+        "format": {
+          "enum": [
+            "html",
+            "json"
+          ],
+          "description": "How to read `response`. `json` means the server sent a JSON media type and the raw body is returned verbatim rather than the browser's rendered viewer."
+        },
+        "html": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "DEPRECATED: renamed to `response`. Still accepted from workers predating the rename; remove once every deployed worker sends `response`."
+        },
+        "loadedMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "null when the job failed before a load time was meaningful."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "waitTimedOut": {
+          "type": "boolean",
+          "description": "Condition not met within budget; html is best-effort."
+        },
+        "matchedRule": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Index of the wait_rules rule that matched, -1 = none/fallback."
+        },
+        "httpStatus": {
+          "type": "integer",
+          "description": "Main-document HTTP status of the crawled page; 0 = not captured (earns 0 credits, never a false payout)."
+        }
+      },
+      "required": [
+        "type",
+        "jobId",
+        "success"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "description": "Gateway -> worker terminal/retryable error before close.",
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "code": {
+          "enum": [
+            "device_auth_failed",
+            "verification_unavailable"
+          ],
+          "description": "device_auth_failed = terminal (pair the device first); verification_unavailable = retryable (back off + reconnect)."
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "code"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/register"
+    },
+    {
+      "$ref": "#/$defs/registered"
+    },
+    {
+      "$ref": "#/$defs/fetch"
+    },
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
+  ]
+}

@@ -26,10 +26,10 @@ jobs:
       - name: Ruff format
         run: ruff format --check .
 
-      - name: Shellcheck the installer
+      - name: Shellcheck the scripts
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck install.sh
+          shellcheck install.sh scripts/sync-spec.sh
           sh -n install.sh
 
   test:
@@ -37,18 +37,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-
-      # The Python suite runs conformance against api-gateway/spec and refuses
-      # to skip if it is missing. Check the sibling repo out beside nothing and
-      # point SPEC_DIR at it. api-gateway is private, so GITHUB_TOKEN cannot
-      # read it cross-repo -- provide a read-scoped PAT as the CI_PAT secret
-      # (falls back to github.token, which works only if api-gateway is public).
-      - name: Checkout api-gateway spec
-        uses: actions/checkout@v6
-        with:
-          repository: meerkly/api-gateway
-          path: api-gateway
-          token: ${{ secrets.CI_PAT || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -58,7 +46,8 @@ jobs:
       - name: Install package
         run: pip install -e '.[dev]'
 
+      # Conformance runs against the vendored spec/ (a copy of api-gateway/spec).
+      # It is private, so CI can't check it out; keep the copy fresh locally with
+      # scripts/sync-spec.sh, where tests prefer the real sibling checkout.
       - name: Run tests
         run: pytest -q
-        env:
-          SPEC_DIR: ${{ github.workspace }}/api-gateway/spec

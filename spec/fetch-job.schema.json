@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meerkly.com/spec/fetch-job.schema.json",
+  "title": "Meerkly fetch job parameters",
+  "description": "Canonical definition of the wait/capture parameters shared by POST /v1/html (snake_case), the gateway->worker fetch frame (camelCase), and both worker implementations. Source of truth for names, bounds, and defaults; the conformance vectors in vectors/ bind all implementations to it.",
+  "$defs": {
+    "waitFor": {
+      "type": "string",
+      "description": "When to capture the HTML. One of the reserved keywords, or any other non-reserved string which is treated as a CSS selector (wait until visible, then stable-settle). Empty/omitted resolves to 'stable'. Selectors are validated server-side (cascadia); invalid -> 400.",
+      "examples": ["stable", "domcontentloaded", "networkidle", "#propertyData"]
+    },
+    "waitForKeyword": {
+      "enum": ["stable", "domcontentloaded", "networkidle"],
+      "description": "Reserved wait_for keywords. 'stable' = DOM structurally quiet ~500ms (content mutations only; CSS animations ignored), capped by settle_ms. 'networkidle' on Android is the window load event (headless-GeckoView limit)."
+    },
+    "settleMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 25000,
+      "description": "Cap on the stable-settle wait. 0/omitted = worker default. Effective worker value: min(settleMs > 0 ? settleMs : 5000, 25000) — see constants."
+    },
+    "detectMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 25000,
+      "description": "How long the worker probes the wait_rules guards. 0/omitted = worker default. Effective worker value: min(detectMs > 0 ? detectMs : 200, 25000) — see constants."
+    },
+    "waitRule": {
+      "type": "object",
+      "description": "Conditional wait: if the guard selector ('if') becomes visible within detect_ms, the target ('then': a wait keyword or CSS selector) is waited for as a required wait. First matching rule by list order wins; no match -> the top-level wait_for fallback.",
+      "properties": {
+        "if": { "type": "string", "minLength": 1, "description": "Guard CSS selector. Must be non-empty and compile; invalid -> 400." },
+        "then": { "type": "string", "description": "Wait keyword or CSS selector. Empty resolves to 'stable'." }
+      },
+      "required": ["if"],
+      "additionalProperties": false
+    },
+    "waitRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/waitRule" },
+      "description": "Prioritized rule list, probed in order."
+    },
+    "constants": {
+      "description": "Shared numeric semantics every worker MUST implement identically. Enforced by the conformance vectors.",
+      "settleDefaultMs": 5000,
+      "settleMaxMs": 25000,
+      "detectDefaultMs": 800,
+      "detectMaxMs": 25000,
+      "stableQuietMs": 500,
+      "waitForDefault": "stable"
+    }
+  }
+}

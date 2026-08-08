@@ -1,0 +1,19 @@
+{
+  "description": "Conformance vectors for POST /v1/html wait-parameter validation/resolution (gateway-side authority: internal/waitfor). `valid: false` means the gateway MUST reject with 400. For valid cases, `resolved` gives the effective waitFor and the rules with each `then` resolved (empty -> stable). Consumed by: api-gateway internal/waitfor conformance test.",
+  "cases": [
+    { "name": "omitted wait_for defaults to stable", "wait_for": "", "wait_rules": [], "valid": true, "resolved": { "wait_for": "stable", "wait_rules": [] } },
+    { "name": "keyword stable", "wait_for": "stable", "wait_rules": [], "valid": true, "resolved": { "wait_for": "stable", "wait_rules": [] } },
+    { "name": "keyword domcontentloaded", "wait_for": "domcontentloaded", "wait_rules": [], "valid": true, "resolved": { "wait_for": "domcontentloaded", "wait_rules": [] } },
+    { "name": "keyword networkidle", "wait_for": "networkidle", "wait_rules": [], "valid": true, "resolved": { "wait_for": "networkidle", "wait_rules": [] } },
+    { "name": "valid css selector", "wait_for": "#propertyData", "wait_rules": [], "valid": true, "resolved": { "wait_for": "#propertyData", "wait_rules": [] } },
+    { "name": "attribute selector with quotes", "wait_for": "[aria-controls=\"main-panel\"]", "wait_rules": [], "valid": true, "resolved": { "wait_for": "[aria-controls=\"main-panel\"]", "wait_rules": [] } },
+    { "name": "malformed selector rejected", "wait_for": "div[unclosed", "wait_rules": [], "valid": false },
+    { "name": "rule with keyword then", "wait_for": "stable", "wait_rules": [ { "if": ".spinner", "then": "networkidle" } ], "valid": true, "resolved": { "wait_for": "stable", "wait_rules": [ { "if": ".spinner", "then": "networkidle" } ] } },
+    { "name": "rule with selector then", "wait_for": "domcontentloaded", "wait_rules": [ { "if": "h1.property-title", "then": "#propertyData" } ], "valid": true, "resolved": { "wait_for": "domcontentloaded", "wait_rules": [ { "if": "h1.property-title", "then": "#propertyData" } ] } },
+    { "name": "rule empty then resolves to stable", "wait_for": "stable", "wait_rules": [ { "if": ".guard", "then": "" } ], "valid": true, "resolved": { "wait_for": "stable", "wait_rules": [ { "if": ".guard", "then": "stable" } ] } },
+    { "name": "rule empty if rejected", "wait_for": "stable", "wait_rules": [ { "if": "", "then": "stable" } ], "valid": false },
+    { "name": "rule malformed if rejected", "wait_for": "stable", "wait_rules": [ { "if": "div[bad", "then": "stable" } ], "valid": false },
+    { "name": "rule malformed then rejected", "wait_for": "stable", "wait_rules": [ { "if": ".guard", "then": "div[bad" } ], "valid": false },
+    { "name": "second rule malformed rejected", "wait_for": "stable", "wait_rules": [ { "if": ".ok", "then": "stable" }, { "if": "div[bad", "then": "stable" } ], "valid": false }
+  ]
+}
